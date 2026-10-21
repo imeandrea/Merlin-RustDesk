@@ -73,7 +73,7 @@ function MainWindow() {
   const offline = (info?.status ?? 0) < 0
 
   return (
-    <div className="bg-background text-foreground flex h-svh flex-col">
+    <div className="bg-background text-foreground relative flex h-svh flex-col">
       <Header status={info?.status ?? 0} />
       {/* Mai scorrimento: tutto entra nella finestra (altezza minima della finestra). */}
       <main className="min-h-0 flex-1 overflow-hidden">
@@ -95,13 +95,10 @@ function MainWindow() {
           {!active?.authorized && (BRAND.contacts.length === 0 ? <Guide /> : <Contacts />)}
         </div>
       </main>
-      {/* Richiesta di collegamento: dialog sopra la finestra principale. */}
-      <Dialog open={!!active && !active.authorized} onOpenChange={o => { if (!o && active) conn.actions.close(active) }}>
-        <DialogContent className="gap-0 p-0 sm:max-w-sm" showCloseButton={false}>
-          <DialogTitle className="sr-only">Richiesta di assistenza</DialogTitle>
-          {active && <Incoming client={active} onAccept={() => conn.actions.accept(active)} onReject={() => conn.actions.close(active)} />}
-        </DialogContent>
-      </Dialog>
+      {/* Richiesta di collegamento: pannello dal basso, non modale (ID e password restano visibili). */}
+      {active && !active.authorized && (
+        <RequestPanel client={active} onAccept={() => conn.actions.accept(active)} onReject={() => conn.actions.close(active)} />
+      )}
       <footer className="flex h-10 shrink-0 items-center gap-2 border-t px-2">
         <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setSettingsOpen(true)}><SettingsIcon /> Accesso non presidiato</Button>
         <ThemeSwitch className="ml-auto" />
@@ -373,6 +370,39 @@ const PERMS = [
 
 function techName(c: Client) {
   return c.name ? `${c.name}${c.peer_id ? ` · ${c.peer_id}` : ""}` : c.peer_id
+}
+
+/** Richiesta di collegamento: pannello che sale dal fondo della finestra principale. */
+function RequestPanel({ client, onAccept, onReject }: { client: Client; onAccept: () => void; onReject: () => void }) {
+  return (
+    <div role="dialog" aria-label="Richiesta di assistenza"
+      className="bg-background animate-in slide-in-from-bottom fade-in absolute inset-x-0 bottom-0 z-40 flex flex-col gap-3 rounded-t-2xl border-t px-5 pt-3 pb-4 shadow-[0_-12px_32px_-12px_rgb(0_0_0/0.25)] duration-300">
+      <div className="bg-muted mx-auto h-1 w-10 rounded-full" />
+      <div className="flex items-center gap-3">
+        <span className="relative grid size-11 shrink-0 place-items-center">
+          <span className="bg-primary/20 absolute inset-0 animate-ping rounded-xl [animation-duration:2s]" />
+          <span className={cn("relative grid size-11 place-items-center rounded-xl", TONE.primary)}><HeadsetIcon className="size-5" /></span>
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-semibold">Richiesta di assistenza</div>
+          <div className="text-muted-foreground truncate text-xs"><b className="text-foreground font-medium">{techName(client)}</b> chiede di collegarsi</div>
+        </div>
+      </div>
+      <div className="bg-muted/50 grid gap-2 rounded-xl p-2.5">
+        {PERMS.map(([k, label, Icon]) => (
+          <Field key={k} orientation="horizontal">
+            <Icon className="text-muted-foreground size-4 shrink-0" />
+            <FieldContent><FieldLabel htmlFor={`rp-${k}`} className="text-xs font-normal">{label}</FieldLabel></FieldContent>
+            <Switch id={`rp-${k}`} defaultChecked={client[k]} onCheckedChange={v => void invoke("cm_permission", { id: client.id, name: k, enabled: v })} />
+          </Field>
+        ))}
+      </div>
+      <div className="flex gap-2">
+        <Button variant="secondary" className="flex-1" onClick={onReject}><XIcon /> Rifiuta</Button>
+        <Button className="flex-1" onClick={onAccept}><CheckIcon /> Accetta</Button>
+      </div>
+    </div>
+  )
 }
 
 function Incoming({ client, onAccept, onReject }: { client: Client; onAccept: () => void; onReject: () => void }) {
