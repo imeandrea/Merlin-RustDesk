@@ -13,8 +13,11 @@ set -euo pipefail
 GITEA="https://git.difonzo.net"
 OWNER="andrea"
 REPO="merlin-rustdesk"
-API="$GITEA/api/v1/repos/$OWNER/$REPO"
 : "${GITEA_TOKEN:?imposta GITEA_TOKEN (token con scrittura sul repo)}"
+# Percorso attuale del repo (se è stato spostato Gitea reindirizza, ma una POST
+# reindirizzata diventa GET: si usa direttamente il nome attuale).
+FULL="$(curl -fsSL -H "Authorization: token $GITEA_TOKEN" "$GITEA/api/v1/repos/$OWNER/$REPO" | python3 -c 'import json,sys; print(json.load(sys.stdin)["full_name"])')"
+API="$GITEA/api/v1/repos/$FULL"
 [ $# -gt 0 ] || { echo "uso: $0 file.exe file.AppImage [file.dmg]" >&2; exit 1; }
 auth=(-H "Authorization: token $GITEA_TOKEN")
 
@@ -43,4 +46,4 @@ for file in "$@"; do
   echo "==> $name ($(du -h "$file" | cut -f1))"
   curl -fsSL "${auth[@]}" -X POST -F "attachment=@$file;filename=$name" "$API/releases/$ID/assets?name=$name" >/dev/null
 done
-echo "Pubblicati in $GITEA/$OWNER/$REPO/releases/tag/latest"
+echo "Pubblicati in $GITEA/$FULL/releases/tag/latest"
