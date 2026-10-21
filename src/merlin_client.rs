@@ -117,3 +117,61 @@ pub fn cm_switch_permission(id: i32, name: String, enabled: bool) {
 pub fn cm_check_click_time(id: i32) {
     crate::ui_cm_interface::check_click_time(id)
 }
+
+// ── Accesso non presidiato: installazione come servizio ────────────────────
+//
+// Windows: `install_me` copia tutta la cartella dell'eseguibile (XCOPY), quindi
+// prima l'eseguibile va copiato da solo in una cartella temporanea pulita e
+// l'installazione parte da lì (`--merlin-install`). L'eseguibile copiato porta
+// con sé la personalizzazione, che sta in fondo al file.
+
+/// Stato dell'installazione: "unsupported", "portable" o "installed".
+pub fn install_state() -> &'static str {
+    #[cfg(windows)]
+    {
+        if crate::platform::is_installed() {
+            "installed"
+        } else {
+            "portable"
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        "unsupported"
+    }
+}
+
+/// Avvia l'installazione (con la richiesta di autorizzazione di Windows).
+#[cfg(windows)]
+pub fn install_service() -> Result<(), String> {
+    let cur = std::env::current_exe().map_err(|e| e.to_string())?;
+    let dir = std::env::temp_dir().join(format!("{}-install", crate::get_app_name()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let staged = dir.join(format!("{}.exe", crate::get_app_name()));
+    std::fs::copy(&cur, &staged).map_err(|e| e.to_string())?;
+    std::process::Command::new(&staged)
+        .arg("--merlin-install")
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Ruolo `--merlin-install` (dalla copia temporanea): installa e apre il
+/// client installato; quello portatile si chiude da solo.
+#[cfg(windows)]
+pub fn run_install() -> bool {
+    match crate::platform::install_me("desktopicon startmenu", String::new(), false, false) {
+        Ok(()) => true,
+        Err(e) => {
+            hbb_common::log::error!("installazione non riuscita: {e}");
+            false
+        }
+    }
+}
+
+/// Disinstalla servizio e programma (chiude anche questo processo).
+#[cfg(windows)]
+pub fn uninstall_service() -> Result<(), String> {
+    crate::platform::uninstall_me(true).map_err(|e| e.to_string())
+}

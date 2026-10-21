@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Spinner } from "@/components/ui/spinner"
 import { Switch } from "@/components/ui/switch"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
@@ -61,7 +62,8 @@ export default function App() {
 
 // ── Finestra principale ─────────────────────────────────────────────────────
 
-interface Info { id: string; status: number; password: string; permanentSet: boolean; version: string }
+type InstallState = "unsupported" | "portable" | "installed"
+interface Info { id: string; status: number; password: string; permanentSet: boolean; version: string; install: InstallState }
 
 function MainWindow() {
   const conn = useConnections()
@@ -74,6 +76,17 @@ function MainWindow() {
     const t = setInterval(refresh, 1000)
     return () => clearInterval(t)
   }, [refresh])
+  // Installazione in corso: appena il client installato c'è, si apre lui e
+  // questa copia (quella scaricata) si chiude.
+  const [installing, setInstalling] = React.useState(false)
+  React.useEffect(() => {
+    if (installing && info?.install === "installed") void invoke("rd_exit")
+  }, [installing, info?.install])
+  React.useEffect(() => {
+    if (!installing) return
+    const t = setTimeout(() => setInstalling(false), 90_000)
+    return () => clearTimeout(t)
+  }, [installing])
   const online = (info?.status ?? 0) > 0
   const offline = (info?.status ?? 0) < 0
 
@@ -109,7 +122,13 @@ function MainWindow() {
         <ThemeSwitch className="ml-auto" />
         <span className="text-muted-foreground pr-2 text-[11px] tabular-nums">{info?.version ? `v${info.version}` : ""}</span>
       </footer>
-      <UnattendedDialog open={settingsOpen} onOpenChange={setSettingsOpen} permanentSet={!!info?.permanentSet} onSaved={refresh} />
+      <UnattendedDialog open={settingsOpen} onOpenChange={setSettingsOpen} permanentSet={!!info?.permanentSet} onSaved={refresh}
+        install={info?.install ?? "unsupported"} installing={installing}
+        onInstall={() => {
+          setInstalling(true)
+          void invoke("rd_install").catch(e => { setInstalling(false); toast.error(`Installazione non avviata: ${e}`) })
+        }}
+        onUninstall={() => { void invoke("rd_uninstall").catch(e => toast.error(`Disinstallazione non riuscita: ${e}`)) }} />
     </div>
   )
 }
@@ -232,10 +251,15 @@ function Contacts() {
   )
 }
 
-function UnattendedDialog({ open, onOpenChange, permanentSet, onSaved }: { open: boolean; onOpenChange: (o: boolean) => void; permanentSet: boolean; onSaved: () => void }) {
+function UnattendedDialog({ open, onOpenChange, permanentSet, onSaved, install, installing, onInstall, onUninstall }: {
+  open: boolean; onOpenChange: (o: boolean) => void; permanentSet: boolean; onSaved: () => void
+  install: InstallState; installing: boolean; onInstall: () => void; onUninstall: () => void
+}) {
   const [pw, setPw] = React.useState("")
   const [pw2, setPw2] = React.useState("")
-  React.useEffect(() => { if (open) { setPw(""); setPw2("") } }, [open])
+  const [confirmRemove, setConfirmRemove] = React.useState(false)
+  React.useEffect(() => { if (open) { setPw(""); setPw2(""); setConfirmRemove(false) } }, [open])
+  const installed = install === "installed"
   const tooShort = pw.length > 0 && pw.length < 8
   const mismatch = pw2.length > 0 && pw !== pw2
   const valid = pw.length >= 8 && pw === pw2
@@ -255,12 +279,26 @@ function UnattendedDialog({ open, onOpenChange, permanentSet, onSaved }: { open:
           <DialogDescription>Con una password permanente il tecnico può collegarsi anche quando non sei al computer.</DialogDescription>
         </DialogHeader>
         <FieldGroup className="bg-muted/50 gap-4 rounded-xl p-3">
-          <Field orientation="horizontal" data-disabled>
+          <Field orientation="horizontal" data-disabled={install === "unsupported" || installing || undefined}>
             <FieldContent>
               <FieldLabel htmlFor="ua" className="font-normal">Avvia con il computer</FieldLabel>
-              <FieldDescription>Installazione come servizio: in arrivo.</FieldDescription>
+              <FieldDescription>
+                {install === "unsupported" ? "Per ora solo su Windows."
+                  : installing ? "Conferma la richiesta di Windows: poi il client si riapre installato."
+                  : confirmRemove ? "Il client viene disinstallato e si chiude."
+                  : installed ? "Installato: si avvia con Windows, anche prima dell'accesso."
+                  : "Installa il client: si avvia con Windows, anche prima dell'accesso."}
+              </FieldDescription>
             </FieldContent>
-            <Switch id="ua" disabled checked={false} />
+            {installing ? <Spinner /> : confirmRemove ? (
+              <div className="flex shrink-0 gap-1">
+                <Button size="sm" variant="ghost" onClick={() => setConfirmRemove(false)}>Annulla</Button>
+                <Button size="sm" variant="destructive" onClick={onUninstall}>Disinstalla</Button>
+              </div>
+            ) : (
+              <Switch id="ua" disabled={install === "unsupported"} checked={installed}
+                onCheckedChange={on => (on ? onInstall() : setConfirmRemove(true))} />
+            )}
           </Field>
           <Field data-invalid={tooShort || undefined}>
             <FieldLabel htmlFor="ua-pw">{permanentSet ? "Nuova password permanente" : "Password permanente"}</FieldLabel>

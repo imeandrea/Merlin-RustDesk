@@ -68,6 +68,7 @@ fn rd_info() -> Value {
         "password": rd::temporary_password(),
         "permanentSet": rd::is_permanent_password_set(),
         "version": rd::version(),
+        "install": rd::install_state(),
     })
 }
 
@@ -79,6 +80,28 @@ fn rd_new_password() {
 #[tauri::command]
 fn rd_set_permanent_password(password: String) -> bool {
     rd::set_permanent_password(password)
+}
+
+/// «Avvia con il computer»: installa il servizio (Windows).
+#[tauri::command]
+fn rd_install() -> Result<(), String> {
+    #[cfg(windows)]
+    return rd::install_service();
+    #[cfg(not(windows))]
+    Err("Non disponibile su questo sistema".into())
+}
+
+#[tauri::command]
+fn rd_uninstall() -> Result<(), String> {
+    #[cfg(windows)]
+    return rd::uninstall_service();
+    #[cfg(not(windows))]
+    Err("Non disponibile su questo sistema".into())
+}
+
+#[tauri::command]
+fn rd_exit(app: AppHandle) {
+    app.exit(0)
 }
 
 #[tauri::command]
@@ -105,6 +128,10 @@ fn main() {
     let brand = BRAND.get_or_init(brand::load);
     let (server, key, relay) = brand::server(brand);
     rd::init(APP_NAME, &server, &key, &relay);
+    #[cfg(windows)]
+    if std::env::args().nth(1).as_deref() == Some("--merlin-install") {
+        std::process::exit(if rd::run_install() { 0 } else { 1 });
+    }
     let args = match rd::core_main() {
         Some(rd::CoreMainAction::StartUi(args)) => args,
         Some(rd::CoreMainAction::ExitFailure(_)) => std::process::exit(1),
@@ -116,7 +143,7 @@ fn main() {
 
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            rd_info, rd_brand, rd_new_password, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
+            rd_info, rd_brand, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
         ])
         .setup(move |app| {
             let (label, url, w, h) = if cm { ("cm", "index.html#cm", 400.0, 600.0) } else { ("main", "index.html", 420.0, 680.0) };
