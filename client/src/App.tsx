@@ -6,10 +6,11 @@ import { Toaster, toast } from "sonner"
 import {
   AppWindowIcon, CheckIcon, ClipboardIcon, CopyIcon, EyeIcon, EyeOffIcon, FolderIcon, GlobeIcon, HeadsetIcon,
   KeyRoundIcon, type LucideIcon, MessageSquareIcon, MonitorIcon, MousePointer2Icon, PowerIcon,
-  RefreshCwIcon, SendIcon, SettingsIcon, LaptopIcon, SunIcon, MoonIcon, ShieldCheckIcon, SparklesIcon, WifiOffIcon, XIcon,
+  RefreshCwIcon, SendIcon, PhoneIcon, MailIcon, MessageCircleIcon, ClockIcon, InfoIcon, SettingsIcon, LaptopIcon, SunIcon, MoonIcon, ShieldCheckIcon, SparklesIcon, WifiOffIcon, XIcon,
 } from "lucide-react"
 
 import logo from "@/assets/logo.png"
+import { brand, type ContactKind } from "@/lib/brand"
 import { cn } from "@/lib/utils"
 import { getTheme, setTheme, type ThemeChoice } from "@/lib/theme"
 import { Button } from "@/components/ui/button"
@@ -35,10 +36,14 @@ const TONE: Record<Tone, string> = {
   primary: "bg-primary/12 text-primary",
 }
 
-/** Personalizzazione (da Merlin per Windows/Linux; su Mac niente contatti → mini guida). */
-const BRAND: { name: string; contacts: ReadonlyArray<{ icon: LucideIcon; label: string; value: string; tone: Tone }> } = {
-  name: "Merlin-RustDesk",
-  contacts: [],
+/** Icona, colore ed etichetta di ogni tipo di contatto. */
+const CONTACT: Record<ContactKind, { icon: LucideIcon; tone: Tone; label: string }> = {
+  phone: { icon: PhoneIcon, tone: "emerald", label: "Telefono" },
+  email: { icon: MailIcon, tone: "sky", label: "Email" },
+  web: { icon: GlobeIcon, tone: "violet", label: "Sito" },
+  whatsapp: { icon: MessageCircleIcon, tone: "emerald", label: "WhatsApp" },
+  hours: { icon: ClockIcon, tone: "amber", label: "Orari" },
+  note: { icon: InfoIcon, tone: "primary", label: "Nota" },
 }
 
 const groupId = (id: string) => id.replace(/(\d{3})(?=\d)/g, "$1 ")
@@ -92,7 +97,7 @@ function MainWindow() {
                 onNewPassword={() => { void invoke("rd_new_password").then(() => { setTimeout(refresh, 300); toast("Nuova password generata") }) }} />
             </>
           )}
-          {!active?.authorized && (BRAND.contacts.length === 0 ? <Guide /> : <Contacts />)}
+          {!active?.authorized && (brand.contacts.length === 0 ? <Guide /> : <Contacts />)}
         </div>
       </main>
       {/* Richiesta di collegamento: pannello dal basso, non modale (ID e password restano visibili). */}
@@ -116,8 +121,8 @@ function Header({ status }: { status: number }) {
     : { text: "Connessione…", cls: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500", ping: true }
   return (
     <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-2.5 border-b px-4">
-      <img src={logo} alt="" className="size-7 shrink-0 object-contain" draggable={false} />
-      <span className="min-w-0 flex-1 truncate font-[JetBrains_Mono,ui-monospace,monospace] text-sm font-bold tracking-tight">{BRAND.name}</span>
+      <img src={brand.logo ?? logo} alt="" className="size-7 shrink-0 object-contain" draggable={false} />
+      <span className="min-w-0 flex-1 truncate font-[JetBrains_Mono,ui-monospace,monospace] text-sm font-bold tracking-tight">{brand.name}</span>
       <span className={cn("flex items-center gap-1.5 text-xs", s.cls)}>
         <span className="relative flex size-2">
           {s.ping && <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-50", s.dot)} />}
@@ -210,18 +215,18 @@ function Contacts() {
     <section className="space-y-1.5">
       <div className="text-muted-foreground px-1 text-[11px] font-medium tracking-wide uppercase">Contatti dell'assistenza</div>
       <div className="grid grid-cols-2 gap-1.5">
-        {BRAND.contacts.map(c => (
-          <Tooltip key={c.label}>
+        {brand.contacts.map((c, i) => { const k = CONTACT[c.kind] ?? CONTACT.note; return (
+          <Tooltip key={i}>
             <TooltipTrigger asChild>
-              <button type="button" onClick={() => copyText(c.value, c.label)}
+              <button type="button" onClick={() => copyText(c.value, k.label)}
                 className="bg-muted/40 hover:bg-muted focus-visible:ring-ring/50 flex min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left outline-none focus-visible:ring-2">
-                <span className={cn("grid size-6 shrink-0 place-items-center rounded-md", TONE[c.tone])}><c.icon className="size-3.5" /></span>
+                <span className={cn("grid size-6 shrink-0 place-items-center rounded-md", TONE[k.tone])}><k.icon className="size-3.5" /></span>
                 <span className="min-w-0 truncate text-xs select-text">{c.value}</span>
               </button>
             </TooltipTrigger>
-            <TooltipContent>{c.label} · clic per copiare</TooltipContent>
+            <TooltipContent>{k.label} · clic per copiare</TooltipContent>
           </Tooltip>
-        ))}
+        )})}
       </div>
     </section>
   )
