@@ -27,12 +27,17 @@ fn push_cm_event(app: &AppHandle, label: &str, mut ev: Value) {
         events.push(ev.clone());
         seq
     };
-    // Richiesta in arrivo: la finestra torna in primo piano.
+    // Richiesta in arrivo: la finestra torna in primo piano (anche dalla
+    // tray). Collegamento accettato (anche con la password): si riduce a icona.
     if ev["ev"] == "add" {
         if let Some(w) = app.get_webview_window(label) {
-            let _ = w.unminimize();
-            let _ = w.show();
-            let _ = w.set_focus();
+            if ev["client"]["authorized"].as_bool() == Some(true) {
+                let _ = w.minimize();
+            } else {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
         }
     }
     let _ = app.emit("cm", ev);
@@ -124,6 +129,45 @@ fn cm_permission(id: i32, name: String, enabled: bool) {
     rd::cm_switch_permission(id, name, enabled)
 }
 
+fn show_main(app: &AppHandle) {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+}
+
+/// Icona nella tray: clic = apri; menu Apri / Esci.
+fn make_tray(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+    let name = BRAND.get().and_then(|b| b["name"].as_str()).filter(|n| !n.is_empty()).unwrap_or("Merlin-RustDesk").to_string();
+    let open = MenuItem::with_id(app, "open", "Apri", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Esci", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &quit])?;
+    let icon = BRAND.get().and_then(brand::logo_png).and_then(|b| tauri::image::Image::from_bytes(&b).ok())
+        .or_else(|| app.default_window_icon().cloned());
+    let mut tray = TrayIconBuilder::with_id("main")
+        .tooltip(&name)
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .on_menu_event(|app, ev| match ev.id().as_ref() {
+            "open" => show_main(app),
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, ev| {
+            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = ev {
+                show_main(tray.app_handle());
+            }
+        });
+    if let Some(icon) = icon {
+        tray = tray.icon(icon);
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 fn main() {
     let brand = BRAND.get_or_init(brand::load);
     let (server, key, relay) = brand::server(brand);
@@ -132,16 +176,38 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some("--merlin-install") {
         std::process::exit(if rd::run_install() { 0 } else { 1 });
     }
-    let args = match rd::core_main() {
+    // `--tray`: lo lancia il servizio all'accesso dell'utente (client
+    // installato). Al posto della tray di RustDesk parte questa interfaccia,
+    // nascosta, con la sua icona nella tray.
+    let tray_start = std::env::args().nth(1).as_deref() == Some("--tray");
+    let args = if tray_start { Vec::new() } else { match rd::core_main() {
         Some(rd::CoreMainAction::StartUi(args)) => args,
         Some(rd::CoreMainAction::ExitFailure(_)) => std::process::exit(1),
         // Ruolo senza finestre (server, servizio…): già eseguito.
         None => return,
-    };
+    } };
     let cm = args.first().is_some_and(|a| a == "--cm");
     rd::start_status_sync();
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    if !cm {
+        // Una sola finestra principale: riaprire il client la mostra.
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+            if !args.iter().any(|a| a == "--tray") {
+                show_main(app);
+            }
+        }));
+    }
+    builder
+        .on_window_event(|w, ev| {
+            // Chiudere la finestra principale la nasconde: il client resta nella tray.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = ev {
+                if w.label() == "main" {
+                    api.prevent_close();
+                    let _ = w.hide();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             rd_info, rd_brand, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
         ])
@@ -151,7 +217,11 @@ fn main() {
                 .title(BRAND.get().and_then(|b| b["name"].as_str()).filter(|n| !n.is_empty()).unwrap_or("Merlin-RustDesk"))
                 .inner_size(w, h)
                 .min_inner_size(400.0, if cm { 560.0 } else { 640.0 })
+                .visible(!tray_start)
                 .build()?;
+            if !cm {
+                make_tray(app)?;
+            }
             // Gestore delle connessioni in arrivo: la finestra principale (il
             // server la trova già in ascolto e non apre altre finestre) o, se
             // il client non era aperto, la finestra --cm lanciata dal server.
