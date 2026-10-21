@@ -101,8 +101,18 @@ impl MerlinHandler {
 }
 
 impl InvokeUiSession for MerlinHandler {
-    fn set_cursor_data(&self, _cd: CursorData) {}
-    fn set_cursor_id(&self, _id: String) {}
+    /// Remote cursor shape as PNG (Merlin uses it as the canvas cursor).
+    fn set_cursor_data(&self, cd: CursorData) {
+        let colors: Vec<u8> = cd.colors.into();
+        let mut png = Vec::new();
+        if repng::encode(&mut png, cd.width as _, cd.height as _, &colors).is_ok() {
+            use hbb_common::base64::{engine::general_purpose::STANDARD, Engine};
+            emit(json!({ "ev": "cursor", "id": cd.id.to_string(), "hotx": cd.hotx, "hoty": cd.hoty, "png": STANDARD.encode(&png) }));
+        }
+    }
+    fn set_cursor_id(&self, id: String) {
+        emit(json!({ "ev": "cursor_id", "id": id }));
+    }
     fn set_cursor_position(&self, _cp: CursorPosition) {}
     fn set_display(&self, x: i32, y: i32, w: i32, h: i32, _cursor_embedded: bool, _scale: f64) {
         emit(json!({ "ev": "set_display", "x": x, "y": y, "width": w, "height": h }));
@@ -215,6 +225,7 @@ fn handle_command(session: &Session<MerlinHandler>, sid: &SessionID, cmd: &Value
         "login" => session.login(String::new(), String::new(), str_of(cmd, "password").to_owned(), false),
         "chat" => session.send_chat(str_of(cmd, "text").to_owned()),
         "ctrl_alt_del" => session.ctrl_alt_del(),
+        "switch_display" => session.switch_display(cmd.get("display").and_then(|x| x.as_i64()).unwrap_or(0) as i32),
         "restart" => session.restart_remote_device(),
         "refresh" => session.refresh_video(-1),
         "reconnect" => session.reconnect(false),
@@ -257,8 +268,23 @@ pub fn run_bridge() {
     {
         let session = session.clone();
         std::thread::spawn(move || {
-            let round = session.connection_round_state.lock().unwrap().new_round();
-            io_loop(session, round);
+            // After "restart remote device" the connection drops: try again until
+            // the machine is back (like the Flutter client does from its UI).
+            let mut restarting_since: Option<std::time::Instant> = None;
+            loop {
+                let round = session.connection_round_state.lock().unwrap().new_round();
+                io_loop(session.clone(), round);
+                if !session.is_restarting_remote_device() {
+                    break;
+                }
+                let since = *restarting_since.get_or_insert_with(std::time::Instant::now);
+                if since.elapsed() > std::time::Duration::from_secs(300) {
+                    emit(json!({ "ev": "msgbox", "type": "error", "title": "Restarting remote device", "text": "The remote device did not come back within 5 minutes", "link": "", "retry": false }));
+                    break;
+                }
+                emit(json!({ "ev": "restarting" }));
+                std::thread::sleep(std::time::Duration::from_secs(3));
+            }
             emit(json!({ "ev": "ended" }));
         });
     }
