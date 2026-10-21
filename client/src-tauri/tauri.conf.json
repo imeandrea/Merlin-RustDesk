@@ -35,7 +35,8 @@
     "linux": {
       "deb": {
         "depends": [
-          "libxdo3"
+          "libxdo3",
+          "libayatana-appindicator3-1"
         ]
       },
       "appimage": {
