@@ -1,0 +1,273 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+/* Utility dei componenti shadcn recenti (shimmer, scroll-fade…): solo CSS, locale. */
+@import "shadcn/tailwind.css";
+/* Temi alternativi (data-palette): vedi il commento nel file. */
+@import "./themes.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Nome nell'header: monospace (stesso font di Merlin). */
+@font-face { font-family: 'JetBrains Mono'; font-weight: 600; font-style: normal; font-display: swap; src: url('./assets/fonts/JetBrainsMono-SemiBold.woff2') format('woff2'); }
+@font-face { font-family: 'JetBrains Mono'; font-weight: 700; font-style: normal; font-display: swap; src: url('./assets/fonts/JetBrainsMono-Bold.woff2') format('woff2'); }
+
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  /* Cornice della finestra attorno a sidebar e pannello del contenuto. */
+  --color-frame: var(--frame);
+  --color-terminal-background: var(--terminal-background);
+  --color-chat: var(--chat-background);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+}
+
+:root,
+[data-palette="merlin"],
+.dark [data-palette="merlin"][data-mode="light"] {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  /* Accento Merlin: indaco del logo (oklch 0.632 0.163 270.8), più scuro
+     nel tema chiaro per il contrasto col testo bianco. */
+  --primary: oklch(0.53 0.2 271);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.632 0.163 270.8);
+  --chart-1: oklch(0.646 0.222 41.116);
+  --chart-2: oklch(0.6 0.118 184.704);
+  --chart-3: oklch(0.398 0.07 227.392);
+  --chart-4: oklch(0.828 0.189 84.429);
+  --chart-5: oklch(0.769 0.188 70.08);
+  --frame: oklch(0.94 0 0);
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.53 0.2 271);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.632 0.163 270.8);
+
+  /* Terminale (tema chiaro): sfondo/testo/cursore/selezione dall'app, colori
+     ANSI dalla palette Tailwind (600 normali, 500 brillanti) leggibili sul
+     bianco. Letti a runtime da src/ui/terminal/terminal-theme.ts. */
+  --terminal-background: var(--background);
+  --terminal-foreground: var(--foreground);
+  --terminal-cursor: var(--foreground);
+  --terminal-cursor-accent: var(--background);
+  --terminal-selection: color-mix(in oklch, var(--primary) 25%, transparent);
+  --terminal-black: oklch(0.205 0 0);
+  --terminal-red: oklch(0.577 0.245 27.325);
+  --terminal-green: oklch(0.527 0.154 150.069);
+  --terminal-yellow: oklch(0.554 0.135 66.442);
+  --terminal-blue: oklch(0.546 0.245 262.881);
+  --terminal-magenta: oklch(0.591 0.293 322.896);
+  --terminal-cyan: oklch(0.52 0.105 223.128);
+  --terminal-white: oklch(0.708 0 0);
+  --terminal-bright-black: oklch(0.556 0 0);
+  --terminal-bright-red: oklch(0.637 0.237 25.331);
+  --terminal-bright-green: oklch(0.627 0.194 149.214);
+  --terminal-bright-yellow: oklch(0.681 0.162 75.834);
+  --terminal-bright-blue: oklch(0.623 0.214 259.815);
+  --terminal-bright-magenta: oklch(0.667 0.295 322.15);
+  --terminal-bright-cyan: oklch(0.609 0.126 221.723);
+  --terminal-bright-white: oklch(0.439 0 0);
+}
+
+.dark,
+.dark [data-palette="merlin"],
+[data-palette="merlin"][data-mode="dark"] {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.632 0.163 270.8);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.632 0.163 270.8);
+  --chart-1: oklch(0.488 0.243 264.376);
+  --chart-2: oklch(0.696 0.17 162.48);
+  --chart-3: oklch(0.769 0.188 70.08);
+  --chart-4: oklch(0.627 0.265 303.9);
+  --chart-5: oklch(0.645 0.246 16.439);
+  --frame: oklch(0.1 0 0);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.632 0.163 270.8);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.632 0.163 270.8);
+
+  /* Terminale (tema scuro): colori ANSI dalla palette Tailwind (400 normali,
+     300 brillanti) luminosi sullo sfondo scuro. */
+  --terminal-background: var(--background);
+  --terminal-foreground: var(--foreground);
+  --terminal-cursor: var(--foreground);
+  --terminal-cursor-accent: var(--background);
+  --terminal-selection: color-mix(in oklch, var(--primary) 35%, transparent);
+  --terminal-black: oklch(0.269 0 0);
+  --terminal-red: oklch(0.704 0.191 22.216);
+  --terminal-green: oklch(0.792 0.209 151.711);
+  --terminal-yellow: oklch(0.852 0.199 91.936);
+  --terminal-blue: oklch(0.707 0.165 254.624);
+  --terminal-magenta: oklch(0.74 0.238 322.16);
+  --terminal-cyan: oklch(0.789 0.154 211.53);
+  --terminal-white: oklch(0.87 0 0);
+  --terminal-bright-black: oklch(0.556 0 0);
+  --terminal-bright-red: oklch(0.808 0.114 19.571);
+  --terminal-bright-green: oklch(0.871 0.15 154.449);
+  --terminal-bright-yellow: oklch(0.905 0.182 98.111);
+  --terminal-bright-blue: oklch(0.809 0.105 251.813);
+  --terminal-bright-magenta: oklch(0.833 0.145 321.434);
+  --terminal-bright-cyan: oklch(0.865 0.127 207.078);
+  --terminal-bright-white: oklch(0.985 0 0);
+}
+
+/* Chat AI: un po' più scura dello sfondo del terminale, in ogni tema e
+   modalità (dichiarata anche su [data-palette] per le anteprime). */
+:root,
+[data-palette] {
+  --chat-background: color-mix(in oklch, var(--terminal-background) 98.5%, black);
+}
+
+/* Splitter sidebar: niente animazioni di larghezza mentre si trascina. */
+[data-sidebar-resizing] [data-slot=sidebar-gap],
+[data-sidebar-resizing] [data-slot=sidebar-container] {
+  transition: none;
+}
+[data-sidebar-resizing] {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* Dialog, form e menu: niente selezione del testo, tranne nei campi. */
+[data-slot=dialog-content],
+[data-slot=popover-content],
+[data-slot=dropdown-menu-content],
+[data-slot=context-menu-content],
+[data-slot=select-content],
+[data-slot=tooltip-content] {
+  user-select: none;
+}
+[data-slot=dialog-content] :is(input, textarea, [contenteditable=true]),
+[data-slot=popover-content] :is(input, textarea, [contenteditable=true]) {
+  user-select: text;
+}
+
+/* Scrollbar native rimaste (es. elenco della palette, textarea): sottili e
+   invisibili finché il puntatore non è sull'area. Le aree principali usano
+   ScrollArea (visibile solo durante lo scorrimento o al passaggio). */
+::-webkit-scrollbar { width: 8px; height: 8px; background: transparent; }
+::-webkit-scrollbar-thumb { background: transparent; border-radius: 4px; }
+:hover::-webkit-scrollbar-thumb { background: color-mix(in oklch, var(--foreground) 20%, transparent); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* «Polvere magica» che sale dal fondo (MagicDust in app-lock.tsx): schermata
+   di blocco e barra di stato. Ferma se il sistema chiede meno movimento. */
+@keyframes merlin-dust-rise {
+  0% { transform: translateY(0) scale(0.4) rotate(0deg); opacity: 0; }
+  15% { opacity: 1; }
+  70% { opacity: 0.8; }
+  100% { transform: translateY(var(--rise, -220px)) translateX(var(--drift, 0px)) scale(1) rotate(180deg); opacity: 0; }
+}
+/* Avanzamento del puntino attivo durante lo scorrimento automatico (Novità). */
+@keyframes merlin-progress {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+@keyframes merlin-glow-breathe {
+  0%, 100% { opacity: 0.55; transform: scaleX(1); }
+  50% { opacity: 0.9; transform: scaleX(1.08); }
+}
+/* Schermata senza sessioni: Merlin che fluttua e cursore che lampeggia. */
+@keyframes merlin-float {
+  0%, 100% { transform: translateY(0) rotate(-1.5deg); }
+  50% { transform: translateY(-10px) rotate(1.5deg); }
+}
+.merlin-float { animation: merlin-float 5s ease-in-out infinite; }
+@keyframes merlin-caret {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+.merlin-caret { animation: merlin-caret 1.05s step-end infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .merlin-float, .merlin-caret { animation: none !important; }
+  .merlin-dust { animation: none !important; opacity: 0 !important; }
+  [data-slot="lock-screen"] .merlin-dust { opacity: 0.35 !important; }
+  .merlin-glow { animation: none !important; }
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html, body, #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    /* App desktop: niente selezione testo/overscroll da pagina web. */
+    overscroll-behavior: none;
+  }
+}
+
+/* Client: niente selezione del testo, tranne dove serve (select-text) e nei campi. */
+html, body { -webkit-user-select: none; user-select: none; overflow: hidden; }
+input, textarea, .select-text { -webkit-user-select: text; user-select: text; }

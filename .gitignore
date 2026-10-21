@@ -60,3 +60,9 @@ flutter/web/
 /third_party/libdrmtap/
 # Local git worktrees
 .worktrees/
+
+# Client Merlin-RustDesk (Tauri)
+client/node_modules/
+client/dist/
+client/src-tauri/gen/
+client/src-tauri/target/
