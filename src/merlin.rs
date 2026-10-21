@@ -24,6 +24,8 @@ use crate::{
 };
 
 const APP_NAME: &str = "MerlinRemote";
+/// Host mode (Merlin receives assistance): separate config, ID and IPC.
+const HOST_APP_NAME: &str = "MerlinHost";
 const TILE: usize = 64;
 
 static OUT: Mutex<()> = Mutex::new(());
@@ -292,11 +294,6 @@ fn handle_command(session: &Session<MerlinHandler>, sid: &SessionID, cmd: &Value
 
 /// Entry point of `merlin-bridge`.
 pub fn run_bridge() {
-    *hbb_common::config::APP_NAME.write().unwrap() = APP_NAME.to_owned();
-    hbb_common::init_log(false, "merlin-bridge");
-    if !crate::common::global_init() {
-        return;
-    }
     let stdin = std::io::stdin();
     let mut lines = stdin.lock().lines();
     let Some(Ok(first)) = lines.next() else { return };
@@ -304,6 +301,16 @@ pub fn run_bridge() {
         emit(json!({ "ev": "error", "text": "invalid connect command" }));
         return;
     };
+    // Host mode: this Merlin receives assistance (own ID and config).
+    let host = str_of(&connect, "cmd") == "host";
+    *hbb_common::config::APP_NAME.write().unwrap() = (if host { HOST_APP_NAME } else { APP_NAME }).to_owned();
+    hbb_common::init_log(false, if host { "merlin-host" } else { "merlin-bridge" });
+    if !crate::common::global_init() {
+        return;
+    }
+    if host {
+        return run_host(&connect, lines);
+    }
     let id = str_of(&connect, "id").replace(' ', "");
     if str_of(&connect, "cmd") != "connect" || id.is_empty() {
         emit(json!({ "ev": "error", "text": "the first command must be connect with an id" }));
@@ -355,4 +362,41 @@ pub fn run_bridge() {
     }
     // stdin closed: Merlin closed the tab.
     session.close();
+}
+
+/// Host mode: Merlin runs the RustDesk server in this process and reports
+/// ID, password, status and incoming connections; stdin carries the answers
+/// (accept, close, chat, permissions, passwords).
+fn run_host(cfg: &Value, lines: impl Iterator<Item = std::io::Result<String>>) {
+    use crate::merlin_client as mc;
+    apply_server(cfg);
+    mc::start_status_sync();
+    mc::start_cm(|ev| emit(json!({ "ev": "cm", "data": ev })));
+    std::thread::spawn(|| crate::start_server(false, false));
+    std::thread::spawn(|| loop {
+        emit(json!({
+            "ev": "host_info", "id": mc::my_id(), "status": mc::status(),
+            "password": mc::temporary_password(), "permanentSet": mc::is_permanent_password_set(),
+        }));
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    });
+    for line in lines {
+        let Ok(line) = line else { break };
+        let Ok(cmd) = serde_json::from_str::<Value>(&line) else { continue };
+        let id = cmd.get("id").and_then(|x| x.as_i64()).unwrap_or(0) as i32;
+        match str_of(&cmd, "cmd") {
+            "new_password" => mc::update_temporary_password(),
+            "set_permanent_password" => {
+                let ok = mc::set_permanent_password(str_of(&cmd, "password").to_owned());
+                emit(json!({ "ev": "permanent_password", "ok": ok }));
+            }
+            "authorize" => mc::cm_authorize(id),
+            "close" => mc::cm_close(id),
+            "chat" => mc::cm_send_chat(id, str_of(&cmd, "text").to_owned()),
+            "permission" => mc::cm_switch_permission(id, str_of(&cmd, "name").to_owned(), bool_of(&cmd, "enabled")),
+            other => log::debug!("merlin host: unknown command {other}"),
+        }
+    }
+    // stdin closed: Merlin turned assistance off or quit.
+    std::process::exit(0);
 }
