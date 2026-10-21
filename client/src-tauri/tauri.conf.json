@@ -31,6 +31,18 @@
       "dmg",
       "app"
     ],
-    "publisher": "Merlin"
+    "publisher": "Merlin",
+    "linux": {
+      "deb": {
+        "depends": [
+          "libxdo3"
+        ]
+      },
+      "appimage": {
+        "files": {
+          "/usr/lib/libxdo.so.3": "/usr/lib/x86_64-linux-gnu/libxdo.so.3"
+        }
+      }
+    }
   }
 }

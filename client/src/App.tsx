@@ -59,6 +59,8 @@ export default function App() {
 interface Info { id: string; status: number; password: string; permanentSet: boolean; version: string }
 
 function MainWindow() {
+  const conn = useConnections()
+  const active = conn.client
   const [info, setInfo] = React.useState<Info | null>(null)
   const [settingsOpen, setSettingsOpen] = React.useState(false)
   const refresh = React.useCallback(() => { void invoke<Info>("rd_info").then(setInfo).catch(() => {}) }, [])
@@ -76,7 +78,10 @@ function MainWindow() {
       {/* Mai scorrimento: tutto entra nella finestra (altezza minima della finestra). */}
       <main className="min-h-0 flex-1 overflow-hidden">
         <div className="flex h-full flex-col justify-center gap-5 px-5 py-4">
-          {offline ? (
+          {active?.authorized ? (
+            <Session client={active} since={conn.since[active.id] ?? Date.now()} chat={conn.chat[active.id] ?? []} compact
+              onSend={text => conn.actions.send(active, text)} onEnd={() => conn.actions.close(active)} />
+          ) : offline ? (
             <Hero tiles={[["rose", WifiOffIcon], ["amber", RefreshCwIcon], ["sky", GlobeIcon]]}
               title="Nessuna connessione" text="Il computer non raggiunge il server di assistenza. Controlla Internet: si ricollega da solo." />
           ) : (
@@ -87,9 +92,16 @@ function MainWindow() {
                 onNewPassword={() => { void invoke("rd_new_password").then(() => { setTimeout(refresh, 300); toast("Nuova password generata") }) }} />
             </>
           )}
-          {BRAND.contacts.length === 0 ? <Guide /> : <Contacts />}
+          {!active?.authorized && (BRAND.contacts.length === 0 ? <Guide /> : <Contacts />)}
         </div>
       </main>
+      {/* Richiesta di collegamento: dialog sopra la finestra principale. */}
+      <Dialog open={!!active && !active.authorized} onOpenChange={o => { if (!o && active) conn.actions.close(active) }}>
+        <DialogContent className="gap-0 p-0 sm:max-w-sm" showCloseButton={false}>
+          <DialogTitle className="sr-only">Richiesta di assistenza</DialogTitle>
+          {active && <Incoming client={active} onAccept={() => conn.actions.accept(active)} onReject={() => conn.actions.close(active)} />}
+        </DialogContent>
+      </Dialog>
       <footer className="flex h-10 shrink-0 items-center gap-2 border-t px-2">
         <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setSettingsOpen(true)}><SettingsIcon /> Accesso non presidiato</Button>
         <ThemeSwitch className="ml-auto" />
@@ -279,35 +291,61 @@ interface Client {
 }
 interface ChatLine { from: "me" | "tech"; text: string; at: number }
 
-function ConnectionWindow() {
+/** Connessioni in arrivo dal nucleo: recupera gli eventi già arrivati (la
+ *  pagina può caricarsi dopo) e scarta quelli già visti (numerati). */
+function useConnections() {
   const [clients, setClients] = React.useState<Client[]>([])
   const [since, setSince] = React.useState<Record<number, number>>({})
   const [chat, setChat] = React.useState<Record<number, ChatLine[]>>({})
+  const lastSeq = React.useRef(0)
   const seen = React.useRef(false)
 
   React.useEffect(() => {
-    const un = listen<Record<string, unknown>>("cm", e => {
-      const ev = e.payload
+    const apply = (ev: Record<string, unknown>) => {
+      const seq = Number(ev.seq ?? 0)
+      if (seq && seq <= lastSeq.current) return
+      if (seq) lastSeq.current = seq
       if (ev.ev === "add") {
         const c = ev.client as Client
         seen.current = true
         setClients(cs => [...cs.filter(x => x.id !== c.id), c])
-        if (c.authorized) setSince(s => (s[c.id] ? s : { ...s, [c.id]: Date.now() }))
+        if (c.authorized) setSince(m => (m[c.id] ? m : { ...m, [c.id]: Date.now() }))
       } else if (ev.ev === "remove") {
         setClients(cs => cs.filter(x => x.id !== ev.id))
       } else if (ev.ev === "chat") {
         const id = ev.id as number
         setChat(m => ({ ...m, [id]: [...(m[id] ?? []), { from: "tech", text: String(ev.text), at: Date.now() }] }))
       }
-    })
-    return () => { void un.then(f => f()) }
+    }
+    let alive = true
+    const un = listen<Record<string, unknown>>("cm", e => apply(e.payload))
+    void un.then(() => invoke<Array<Record<string, unknown>>>("cm_backlog")).then(list => { if (alive) list.forEach(apply) })
+    return () => { alive = false; void un.then(f => f()) }
   }, [])
+
+  const client = clients[0]
+  const actions = {
+    accept: (c: Client) => {
+      void invoke("cm_authorize", { id: c.id })
+      setSince(m => ({ ...m, [c.id]: Date.now() }))
+      setClients(cs => cs.map(x => (x.id === c.id ? { ...x, authorized: true } : x)))
+    },
+    close: (c: Client) => void invoke("cm_close", { id: c.id }),
+    send: (c: Client, text: string) => {
+      void invoke("cm_chat", { id: c.id, text })
+      setChat(m => ({ ...m, [c.id]: [...(m[c.id] ?? []), { from: "me", text, at: Date.now() }] }))
+    },
+  }
+  return { client, clients, since, chat, seen, actions }
+}
+
+/** Finestra --cm (il client non era aperto): solo la connessione. */
+function ConnectionWindow() {
+  const { client, clients, since, chat, seen, actions } = useConnections()
   // Nessuna connessione rimasta: la finestra si chiude.
   React.useEffect(() => {
     if (seen.current && clients.length === 0) void getCurrentWindow().close()
-  }, [clients.length])
-
-  const client = clients[0]
+  }, [clients.length, seen])
   return (
     <div className="bg-background text-foreground flex h-svh flex-col">
       <Header status={1} />
@@ -317,13 +355,10 @@ function ConnectionWindow() {
             <Hero tiles={[["sky", MonitorIcon], ["primary", HeadsetIcon], ["emerald", ShieldCheckIcon]]} title="In attesa…" />
           </div>
         ) : !client.authorized ? (
-          <Incoming client={client}
-            onAccept={() => { void invoke("cm_authorize", { id: client.id }); setSince(s => ({ ...s, [client.id]: Date.now() })); setClients(cs => cs.map(c => (c.id === client.id ? { ...c, authorized: true } : c))) }}
-            onReject={() => void invoke("cm_close", { id: client.id })} />
+          <Incoming client={client} onAccept={() => actions.accept(client)} onReject={() => actions.close(client)} />
         ) : (
           <Session client={client} since={since[client.id] ?? Date.now()} chat={chat[client.id] ?? []}
-            onSend={text => { void invoke("cm_chat", { id: client.id, text }); setChat(m => ({ ...m, [client.id]: [...(m[client.id] ?? []), { from: "me", text, at: Date.now() }] })) }}
-            onEnd={() => void invoke("cm_close", { id: client.id })} />
+            onSend={text => actions.send(client, text)} onEnd={() => actions.close(client)} />
         )}
       </main>
     </div>
@@ -365,7 +400,7 @@ function Incoming({ client, onAccept, onReject }: { client: Client; onAccept: ()
   )
 }
 
-function Session({ client, since, chat, onSend, onEnd }: { client: Client; since: number; chat: ChatLine[]; onSend: (t: string) => void; onEnd: () => void }) {
+function Session({ client, since, chat, onSend, onEnd, compact }: { client: Client; since: number; chat: ChatLine[]; onSend: (t: string) => void; onEnd: () => void; compact?: boolean }) {
   const [now, setNow] = React.useState(Date.now())
   React.useEffect(() => { const t = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(t) }, [])
   const secs = Math.max(0, Math.floor((now - since) / 1000))
@@ -374,7 +409,7 @@ function Session({ client, since, chat, onSend, onEnd }: { client: Client; since
   const end = React.useRef<HTMLDivElement>(null)
   React.useEffect(() => { end.current?.scrollIntoView({ block: "nearest" }) }, [chat.length])
   return (
-    <div className="flex h-full flex-col gap-3 px-5 py-4">
+    <div className={cn("flex flex-col gap-3", compact ? "min-h-0 flex-1" : "h-full px-5 py-4")}>
       <div className="flex items-center gap-3">
         <span className="relative flex size-3">
           <span className="bg-primary absolute inline-flex size-full animate-ping rounded-full opacity-60" />

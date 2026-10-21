@@ -7,9 +7,40 @@
 // gestisce `core_main` del nucleo, senza finestre.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use std::sync::Mutex;
+
 use librustdesk::merlin_client as rd;
 use serde_json::{json, Value};
-use tauri::{Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{AppHandle, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+
+/// Eventi delle connessioni (numerati): la pagina li recupera appena è
+/// pronta, così niente va perso se arrivano prima che sia caricata.
+static CM_EVENTS: Mutex<Vec<Value>> = Mutex::new(Vec::new());
+
+fn push_cm_event(app: &AppHandle, label: &str, mut ev: Value) {
+    let seq = {
+        let mut events = CM_EVENTS.lock().unwrap();
+        let seq = events.len() as u64 + 1;
+        ev["seq"] = json!(seq);
+        events.push(ev.clone());
+        seq
+    };
+    // Richiesta in arrivo: la finestra torna in primo piano.
+    if ev["ev"] == "add" {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.unminimize();
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    }
+    let _ = app.emit("cm", ev);
+    let _ = seq;
+}
+
+#[tauri::command]
+fn cm_backlog() -> Vec<Value> {
+    CM_EVENTS.lock().unwrap().clone()
+}
 
 /// Nome usato per configurazione e IPC: separato da RustDesk e da Merlin.
 const APP_NAME: &str = "MerlinRustDesk";
@@ -68,7 +99,7 @@ fn main() {
 
     tauri::Builder::default()
         .invoke_handler(tauri::generate_handler![
-            rd_info, rd_new_password, rd_set_permanent_password, cm_authorize, cm_close, cm_chat, cm_permission
+            rd_info, rd_new_password, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
         ])
         .setup(move |app| {
             let (label, url, w, h) = if cm { ("cm", "index.html#cm", 400.0, 600.0) } else { ("main", "index.html", 420.0, 680.0) };
@@ -77,13 +108,14 @@ fn main() {
                 .inner_size(w, h)
                 .min_inner_size(400.0, if cm { 560.0 } else { 640.0 })
                 .build()?;
+            // Gestore delle connessioni in arrivo: la finestra principale (il
+            // server la trova già in ascolto e non apre altre finestre) o, se
+            // il client non era aperto, la finestra --cm lanciata dal server.
+            let handle = app.handle().clone();
+            rd::start_cm(move |ev| push_cm_event(&handle, label, ev));
             if cm {
-                // Eventi delle connessioni in arrivo verso la finestra.
-                let handle = app.handle().clone();
-                rd::start_cm(move |ev| { let _ = handle.emit_to("cm", "cm", ev); });
                 let _ = win.set_always_on_top(true);
             }
-            let _ = app.get_webview_window(label);
             Ok(())
         })
         .run(tauri::generate_context!())
