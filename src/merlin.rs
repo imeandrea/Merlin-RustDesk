@@ -244,7 +244,7 @@ fn job_of(v: &Value) -> i32 {
 
 /// Server, relay and key come from Merlin's settings.
 fn apply_server(cmd: &Value) {
-    for (opt, key) in [("custom-rendezvous-server", "server"), ("relay-server", "relay"), ("key", "key")] {
+    for (opt, key) in [("custom-rendezvous-server", "server"), ("relay-server", "relay"), ("key", "key"), ("api-server", "api")] {
         Config::set_option(opt.to_owned(), str_of(cmd, key).trim().to_owned());
     }
 }

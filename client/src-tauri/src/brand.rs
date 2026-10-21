@@ -49,13 +49,13 @@ fn read(path: &PathBuf) -> Option<Value> {
 }
 
 /// Server scelto in Merlin (se c'è), altrimenti quello compilato nel client.
-pub fn server(brand: &Value) -> (String, String, String) {
+pub fn server(brand: &Value) -> (String, String, String, String) {
     let s = &brand["server"];
     let pick = |k: &str, fallback: &str| s[k].as_str().filter(|v| !v.is_empty()).unwrap_or(fallback).to_string();
     if s["host"].as_str().is_some_and(|h| !h.is_empty()) {
-        (pick("host", ""), pick("key", ""), pick("relay", ""))
+        (pick("host", ""), pick("key", ""), pick("relay", ""), pick("api", env!("MERLIN_RD_API")))
     } else {
-        (env!("MERLIN_RD_SERVER").into(), env!("MERLIN_RD_KEY").into(), env!("MERLIN_RD_RELAY").into())
+        (env!("MERLIN_RD_SERVER").into(), env!("MERLIN_RD_KEY").into(), env!("MERLIN_RD_RELAY").into(), env!("MERLIN_RD_API").into())
     }
 }
 

@@ -190,8 +190,8 @@ fn make_tray(app: &tauri::App) -> tauri::Result<()> {
 
 fn main() {
     let brand = BRAND.get_or_init(brand::load);
-    let (server, key, relay) = brand::server(brand);
-    rd::init(APP_NAME, &server, &key, &relay);
+    let (server, key, relay, api) = brand::server(brand);
+    rd::init(APP_NAME, &server, &key, &relay, &api);
     #[cfg(windows)]
     if std::env::args().nth(1).as_deref() == Some("--merlin-install") {
         std::process::exit(if rd::run_install() { 0 } else { 1 });

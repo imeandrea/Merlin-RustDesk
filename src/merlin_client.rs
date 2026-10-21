@@ -16,9 +16,9 @@ use crate::ui_cm_interface::{start_ipc, Client, ConnectionManager, InvokeUiCM};
 pub use crate::core_main::{core_main, CoreMainAction};
 
 /// Must run first in `main`, before `core_main`.
-pub fn init(app_name: &str, server: &str, key: &str, relay: &str) {
+pub fn init(app_name: &str, server: &str, key: &str, relay: &str, api: &str) {
     *APP_NAME.write().unwrap() = app_name.to_owned();
-    for (opt, value) in [("custom-rendezvous-server", server), ("key", key), ("relay-server", relay)] {
+    for (opt, value) in [("custom-rendezvous-server", server), ("key", key), ("relay-server", relay), ("api-server", api)] {
         if Config::get_option(opt) != value {
             Config::set_option(opt.to_owned(), value.to_owned());
         }

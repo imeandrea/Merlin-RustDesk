@@ -9,7 +9,7 @@ fn main() {
             }
         }
     }
-    for k in ["MERLIN_RD_SERVER", "MERLIN_RD_KEY", "MERLIN_RD_RELAY"] {
+    for k in ["MERLIN_RD_SERVER", "MERLIN_RD_KEY", "MERLIN_RD_RELAY", "MERLIN_RD_API"] {
         let v = std::env::var(k).ok().or_else(|| vals.get(k).cloned()).unwrap_or_default();
         println!("cargo:rustc-env={k}={v}");
         println!("cargo:rerun-if-env-changed={k}");
