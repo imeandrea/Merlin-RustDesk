@@ -189,6 +189,8 @@ fn make_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 fn main() {
+    #[cfg(target_os = "linux")]
+    linux_install::prepare_extracted_env();
     let brand = BRAND.get_or_init(brand::load);
     let (server, key, relay, api) = brand::server(brand);
     rd::init(APP_NAME, &server, &key, &relay, &api);

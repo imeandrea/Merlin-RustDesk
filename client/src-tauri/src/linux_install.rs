@@ -63,7 +63,7 @@ systemctl stop merlinrustdesk 2>/dev/null || true
 rm -rf {dir}
 mkdir -p {dir}
 mv "$T/squashfs-root" {dir}/app
-chmod -R go-w {dir}
+chmod -R u+rwX,go+rX,go-w {dir}
 rm -rf "$T"
 cat > /etc/systemd/system/merlinrustdesk.service <<'UNIT_EOF'
 {unit}UNIT_EOF
@@ -115,4 +115,38 @@ pub fn open_installed() {
         .env_remove("ARGV0")
         .env_remove("LD_LIBRARY_PATH")
         .spawn();
+}
+
+/// Client installato (AppImage estratta): prepara l'ambiente che l'AppImage
+/// imposta da sola (AppRun): cartella di lavoro `usr` (WebKit cerca i suoi
+/// processi in `./lib/...`) e variabili di GTK. Va chiamata per prima.
+pub fn prepare_extracted_env() {
+    if std::env::var_os("APPIMAGE").is_some() {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else { return };
+    let Some(usr) = exe.parent().and_then(|b| b.parent()) else { return };
+    let Some(appdir) = usr.parent() else { return };
+    if !appdir.join("AppRun").exists() || !usr.join("lib").exists() {
+        return;
+    }
+    let a = appdir.to_string_lossy().to_string();
+    let data = std::env::var("XDG_DATA_DIRS").unwrap_or_else(|_| "/usr/local/share:/usr/share".into());
+    let vars = [
+        ("APPDIR", a.clone()),
+        ("GTK_DATA_PREFIX", a.clone()),
+        ("GTK_THEME", std::env::var("GTK_THEME").unwrap_or_else(|_| "Adwaita".into())),
+        ("XDG_DATA_DIRS", format!("{a}/usr/share:{data}")),
+        ("GSETTINGS_SCHEMA_DIR", format!("{a}/usr/share/glib-2.0/schemas")),
+        ("GI_TYPELIB_PATH", format!("{a}/usr/lib/girepository-1.0")),
+        ("GIO_MODULE_DIR", format!("{a}/usr/lib/gio/modules")),
+        ("GTK_EXE_PREFIX", format!("{a}/usr")),
+        ("GTK_PATH", format!("{a}/usr/lib/gtk-3.0")),
+        ("GTK_IM_MODULE_FILE", format!("{a}/usr/lib/gtk-3.0/3.0.0/immodules.cache")),
+        ("GDK_PIXBUF_MODULE_FILE", format!("{a}/usr/lib/gdk-pixbuf-2.0/2.10.0/loaders.cache")),
+    ];
+    for (k, v) in vars {
+        std::env::set_var(k, v);
+    }
+    let _ = std::env::set_current_dir(usr);
 }
