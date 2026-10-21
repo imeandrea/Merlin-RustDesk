@@ -126,8 +126,9 @@ impl InvokeUiSession for MerlinHandler {
     fn set_permission(&self, name: &str, value: bool) {
         emit(json!({ "ev": "permission", "name": name, "value": value }));
     }
+    // First frame arrived: the "connecting" message can go (not a session close).
     fn close_success(&self) {
-        emit(json!({ "ev": "closed" }));
+        emit(json!({ "ev": "first_frame" }));
     }
     fn update_quality_status(&self, _qs: QualityStatus) {}
     fn set_connection_type(&self, is_secured: bool, direct: bool, _stream_type: &str) {
