@@ -135,7 +135,18 @@ pub fn install_state() -> &'static str {
             "portable"
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        // Servizio systemd del client (installato dall'AppImage, vedi il client).
+        if std::path::Path::new("/etc/systemd/system/merlinrustdesk.service").exists() {
+            "installed"
+        } else if std::env::var_os("APPIMAGE").is_some() {
+            "portable"
+        } else {
+            "unsupported"
+        }
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         "unsupported"
     }

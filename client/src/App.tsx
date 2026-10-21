@@ -283,11 +283,11 @@ function UnattendedDialog({ open, onOpenChange, permanentSet, onSaved, install, 
             <FieldContent>
               <FieldLabel htmlFor="ua" className="font-normal">Avvia con il computer</FieldLabel>
               <FieldDescription>
-                {install === "unsupported" ? "Per ora solo su Windows."
-                  : installing ? "Conferma la richiesta di Windows: poi il client si riapre installato."
+                {install === "unsupported" ? "Non disponibile su questo sistema (su Linux si installa dall'AppImage)."
+                  : installing ? "Conferma la richiesta di autorizzazione: poi il client si riapre installato."
                   : confirmRemove ? "Il client viene disinstallato e si chiude."
-                  : installed ? "Installato: si avvia con Windows, anche prima dell'accesso."
-                  : "Installa il client: si avvia con Windows, anche prima dell'accesso."}
+                  : installed ? "Installato: si avvia con il computer, anche prima dell'accesso."
+                  : "Installa il client: si avvia con il computer, anche prima dell'accesso."}
               </FieldDescription>
             </FieldContent>
             {installing ? <Spinner /> : confirmRemove ? (

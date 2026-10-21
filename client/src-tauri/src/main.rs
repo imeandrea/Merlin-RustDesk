@@ -8,6 +8,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod brand;
+#[cfg(target_os = "linux")]
+mod linux_install;
 
 use std::sync::{Mutex, OnceLock};
 
@@ -38,6 +40,14 @@ fn push_cm_event(app: &AppHandle, label: &str, mut ev: Value) {
                 let _ = w.unminimize();
                 let _ = w.set_focus();
             }
+        }
+    }
+    // Messaggio del tecnico in chat: la finestra torna visibile.
+    if ev["ev"] == "chat" {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.show();
+            let _ = w.unminimize();
+            let _ = w.set_focus();
         }
     }
     let _ = app.emit("cm", ev);
@@ -89,23 +99,33 @@ fn rd_set_permanent_password(password: String) -> bool {
 
 /// «Avvia con il computer»: installa il servizio (Windows).
 #[tauri::command]
-fn rd_install() -> Result<(), String> {
+async fn rd_install() -> Result<(), String> {
     #[cfg(windows)]
     return rd::install_service();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return tauri::async_runtime::spawn_blocking(linux_install::install).await.map_err(|e| e.to_string())?;
+    #[cfg(not(any(windows, target_os = "linux")))]
     Err("Non disponibile su questo sistema".into())
 }
 
 #[tauri::command]
-fn rd_uninstall() -> Result<(), String> {
+async fn rd_uninstall() -> Result<(), String> {
     #[cfg(windows)]
     return rd::uninstall_service();
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    return tauri::async_runtime::spawn_blocking(linux_install::uninstall).await.map_err(|e| e.to_string())?;
+    #[cfg(not(any(windows, target_os = "linux")))]
     Err("Non disponibile su questo sistema".into())
 }
 
 #[tauri::command]
 fn rd_exit(app: AppHandle) {
+    // Linux: dopo l'installazione dall'AppImage si apre il client installato
+    // (su Windows lo apre già l'installazione).
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("APPIMAGE").is_some() && rd::install_state() == "installed" {
+        linux_install::open_installed();
+    }
     app.exit(0)
 }
 

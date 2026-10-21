@@ -5,7 +5,7 @@
 use std::{
     fs::File,
     io::{Read, Seek, SeekFrom},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use serde_json::Value;
@@ -64,4 +64,17 @@ pub fn logo_png(brand: &Value) -> Option<Vec<u8>> {
     use base64::{engine::general_purpose::STANDARD, Engine};
     let data = brand["logo"].as_str()?.strip_prefix("data:image/png;base64,")?;
     STANDARD.decode(data).ok()
+}
+
+/// Coda della personalizzazione così com'è nel file (JSON, lunghezza, MERLINRD),
+/// per ricopiarla nell'eseguibile installato.
+pub fn raw_tail(path: &Path) -> Option<Vec<u8>> {
+    let data = std::fs::read(path).ok()?;
+    let zeros = data.iter().rev().take(7).take_while(|b| **b == 0).count();
+    let end = data.len() - zeros;
+    if end < 12 || &data[end - 8..end] != MAGIC {
+        return None;
+    }
+    let len = u32::from_le_bytes(data[end - 12..end - 8].try_into().ok()?) as usize;
+    (len + 12 <= end).then(|| data[end - 12 - len..end].to_vec())
 }
