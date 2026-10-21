@@ -11,6 +11,7 @@ import {
 
 import logo from "@/assets/logo.png"
 import { brand, type ContactKind } from "@/lib/brand"
+import { AboutDialog } from "@/about"
 import { cn } from "@/lib/utils"
 import { getTheme, setTheme, type ThemeChoice } from "@/lib/theme"
 import { Button } from "@/components/ui/button"
@@ -70,6 +71,7 @@ function MainWindow() {
   const active = conn.client
   const [info, setInfo] = React.useState<Info | null>(null)
   const [settingsOpen, setSettingsOpen] = React.useState(false)
+  const [aboutOpen, setAboutOpen] = React.useState(false)
   const refresh = React.useCallback(() => { void invoke<Info>("rd_info").then(setInfo).catch(() => {}) }, [])
   React.useEffect(() => {
     refresh()
@@ -120,8 +122,16 @@ function MainWindow() {
       <footer className="flex h-10 shrink-0 items-center gap-2 border-t px-2">
         <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setSettingsOpen(true)}><SettingsIcon /> Accesso non presidiato</Button>
         <ThemeSwitch className="ml-auto" />
-        <span className="text-muted-foreground pr-2 text-[11px] tabular-nums">{info?.version ? `v${info.version}` : ""}</span>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button variant="ghost" size="sm" className="text-muted-foreground h-7 gap-1 px-1.5 text-[11px] font-normal tabular-nums" onClick={() => setAboutOpen(true)}>
+              <InfoIcon className="size-3.5" /> {info?.version ? `v${info.version}` : ""}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent>Informazioni e licenze</TooltipContent>
+        </Tooltip>
       </footer>
+      <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} version={info?.version ?? ""} />
       <UnattendedDialog open={settingsOpen} onOpenChange={setSettingsOpen} permanentSet={!!info?.permanentSet} onSaved={refresh}
         install={info?.install ?? "unsupported"} installing={installing}
         onInstall={() => {
