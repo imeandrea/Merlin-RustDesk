@@ -9,8 +9,9 @@ description = "Client di assistenza remota Merlin-RustDesk"
 tauri-build = { version = "2.7.1", features = [] }
 
 [dependencies]
-tauri = { version = "2.12.1", features = [] }
+tauri = { version = "2.12.1", features = ["image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+base64 = "0.22"
 # Nucleo RustDesk (questo repository), con l'API per il client Merlin.
 rustdesk = { path = "../..", features = ["merlin"] }

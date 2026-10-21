@@ -58,3 +58,10 @@ pub fn server(brand: &Value) -> (String, String, String) {
         (env!("MERLIN_RD_SERVER").into(), env!("MERLIN_RD_KEY").into(), env!("MERLIN_RD_RELAY").into())
     }
 }
+
+/// Logo personalizzato (PNG) dal data URL della personalizzazione.
+pub fn logo_png(brand: &Value) -> Option<Vec<u8>> {
+    use base64::{engine::general_purpose::STANDARD, Engine};
+    let data = brand["logo"].as_str()?.strip_prefix("data:image/png;base64,")?;
+    STANDARD.decode(data).ok()
+}

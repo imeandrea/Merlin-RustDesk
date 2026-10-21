@@ -5285,6 +5285,7 @@ dependencies = [
 name = "merlin-rustdesk-client"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "rustdesk",
  "serde 1.0.228",
  "serde_json 1.0.154",
@@ -9504,6 +9505,7 @@ dependencies = [
  "gtk",
  "heck 0.5.0",
  "http",
+ "image 0.25.1",
  "jni",
  "libc",
  "log",

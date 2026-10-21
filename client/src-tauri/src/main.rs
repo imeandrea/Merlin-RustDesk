@@ -67,7 +67,7 @@ fn rd_info() -> Value {
         "status": rd::status(),
         "password": rd::temporary_password(),
         "permanentSet": rd::is_permanent_password_set(),
-        "version": rd::version(),
+        "version": env!("CARGO_PKG_VERSION"),
         "install": rd::install_state(),
     })
 }
@@ -157,6 +157,12 @@ fn main() {
             // il client non era aperto, la finestra --cm lanciata dal server.
             let handle = app.handle().clone();
             rd::start_cm(move |ev| push_cm_event(&handle, label, ev));
+            // Logo personalizzato anche come icona della finestra e della barra.
+            if let Some(icon) = BRAND.get().and_then(brand::logo_png) {
+                if let Ok(img) = tauri::image::Image::from_bytes(&icon) {
+                    let _ = win.set_icon(img);
+                }
+            }
             if cm {
                 let _ = win.set_always_on_top(true);
             }
