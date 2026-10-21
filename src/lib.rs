@@ -65,6 +65,8 @@ mod updater;
 mod ui_cm_interface;
 mod ui_interface;
 mod ui_session_interface;
+#[cfg(feature = "merlin")]
+pub mod merlin;
 
 mod hbbs_http;
 
