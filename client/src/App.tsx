@@ -363,7 +363,8 @@ function useConnections() {
     return () => { alive = false; void un.then(f => f()) }
   }, [])
 
-  const client = clients[0]
+  // Una richiesta in attesa (anche quella dei soli file) ha la precedenza sulla sessione in corso.
+  const client = clients.find(c => !c.authorized) ?? clients[0]
   const actions = {
     accept: (c: Client) => {
       void invoke("cm_authorize", { id: c.id })

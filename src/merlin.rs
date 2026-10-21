@@ -27,6 +27,8 @@ const APP_NAME: &str = "MerlinRemote";
 const TILE: usize = 64;
 
 static OUT: Mutex<()> = Mutex::new(());
+/// The file transfer session, to answer overwrite questions from callbacks.
+static FILE_SESSION: std::sync::OnceLock<Session<MerlinHandler>> = std::sync::OnceLock::new();
 
 fn write_msg(kind: u8, payload: &[u8]) {
     let _guard = OUT.lock().unwrap();
@@ -145,19 +147,47 @@ impl InvokeUiSession for MerlinHandler {
         emit(json!({ "ev": "connection_type", "secured": is_secured, "direct": direct }));
     }
     fn set_fingerprint(&self, _fingerprint: String) {}
-    fn job_error(&self, _id: i32, _err: String, _file_num: i32) {}
-    fn job_done(&self, _id: i32, _file_num: i32) {}
+    // File transfer session (`"mode":"file"`): results go to Merlin's file panel.
+    fn job_error(&self, id: i32, err: String, file_num: i32) {
+        emit(json!({ "ev": "fs_error", "job": id, "err": err, "file": file_num }));
+    }
+    fn job_done(&self, id: i32, file_num: i32) {
+        emit(json!({ "ev": "fs_done", "job": id, "file": file_num }));
+    }
     fn clear_all_jobs(&self) {}
     fn new_message(&self, msg: String) {
         emit(json!({ "ev": "chat", "text": msg }));
     }
     fn update_transfer_list(&self) {}
     fn load_last_job(&self, _cnt: i32, _job_json: &str, _auto_start: bool) {}
-    fn update_folder_files(&self, _id: i32, _entries: &Vec<FileEntry>, _path: String, _is_local: bool, _only_count: bool) {}
+    fn update_folder_files(&self, id: i32, entries: &Vec<FileEntry>, path: String, is_local: bool, _only_count: bool) {
+        if id == 0 && !is_local {
+            let list: Vec<Value> = entries.iter().map(|e| {
+                let kind = match e.entry_type.enum_value() {
+                    Ok(FileType::Dir) | Ok(FileType::DirDrive) => "dir",
+                    Ok(FileType::DirLink) | Ok(FileType::FileLink) => "symlink",
+                    _ => "file",
+                };
+                json!({ "name": e.name, "type": kind, "size": e.size, "time": e.modified_time, "hidden": e.is_hidden })
+            }).collect();
+            emit(json!({ "ev": "fs_dir", "path": path, "entries": list }));
+        } else if id > 0 {
+            // Files of a transfer job: count and total size for the progress bar.
+            let total: u64 = entries.iter().map(|e| e.size).sum();
+            emit(json!({ "ev": "fs_job", "job": id, "count": entries.len(), "total": total }));
+        }
+    }
     fn confirm_delete_files(&self, _id: i32, _i: i32, _name: String) {}
-    fn override_file_confirm(&self, _id: i32, _file_num: i32, _to: String, _is_upload: bool, _is_identical: bool) {}
+    // Merlin asks about existing files before copying: here always overwrite.
+    fn override_file_confirm(&self, id: i32, file_num: i32, _to: String, is_upload: bool, _is_identical: bool) {
+        if let Some(session) = FILE_SESSION.get() {
+            session.set_confirm_override_file(id, file_num, true, true, is_upload);
+        }
+    }
     fn update_block_input_state(&self, _on: bool) {}
-    fn job_progress(&self, _id: i32, _file_num: i32, _speed: f64, _finished_size: f64) {}
+    fn job_progress(&self, id: i32, file_num: i32, speed: f64, finished_size: f64) {
+        emit(json!({ "ev": "fs_progress", "job": id, "file": file_num, "speed": speed, "done": finished_size }));
+    }
     fn adapt_size(&self) {}
     fn on_rgba(&self, _display: usize, rgba: &mut scrap::ImageRgb) {
         self.send_changes(rgba);
@@ -192,6 +222,10 @@ fn str_of<'a>(v: &'a Value, k: &str) -> &'a str {
 
 fn bool_of(v: &Value, k: &str) -> bool {
     v.get(k).and_then(|x| x.as_bool()).unwrap_or(false)
+}
+
+fn job_of(v: &Value) -> i32 {
+    v.get("job").and_then(|x| x.as_i64()).unwrap_or(0) as i32
 }
 
 /// Server, relay and key come from Merlin's settings.
@@ -230,6 +264,14 @@ fn handle_command(session: &Session<MerlinHandler>, sid: &SessionID, cmd: &Value
         "refresh" => session.refresh_video(-1),
         "reconnect" => session.reconnect(false),
         "close" => session.close(),
+        // File transfer (session started with "mode":"file"); paths are remote.
+        "fs_list" => session.read_remote_dir(str_of(cmd, "path").to_owned(), true),
+        "fs_send" => session.send_files(job_of(cmd), 0, str_of(cmd, "path").to_owned(), str_of(cmd, "to").to_owned(), 0, true, bool_of(cmd, "download")),
+        "fs_cancel" => session.cancel_job(job_of(cmd)),
+        "fs_mkdir" => session.create_dir(job_of(cmd), str_of(cmd, "path").to_owned(), true),
+        "fs_rename" => session.rename_file(job_of(cmd), str_of(cmd, "path").to_owned(), str_of(cmd, "name").to_owned(), true),
+        "fs_remove" if bool_of(cmd, "dir") => session.remove_dir(job_of(cmd), str_of(cmd, "path").to_owned(), true),
+        "fs_remove" => session.remove_file(job_of(cmd), str_of(cmd, "path").to_owned(), 0, true),
         other => log::debug!("merlin: unknown command {other}"),
     }
 }
@@ -263,7 +305,11 @@ pub fn run_bridge() {
         reconnect_count: Arc::new(AtomicUsize::new(0)),
         ..Default::default()
     };
-    session.lc.write().unwrap().initialize(id, ConnType::DEFAULT_CONN, None, bool_of(&connect, "forceRelay"), None, None, None);
+    let conn_type = if str_of(&connect, "mode") == "file" { ConnType::FILE_TRANSFER } else { ConnType::DEFAULT_CONN };
+    if conn_type == ConnType::FILE_TRANSFER {
+        let _ = FILE_SESSION.set(session.clone());
+    }
+    session.lc.write().unwrap().initialize(id, conn_type, None, bool_of(&connect, "forceRelay"), None, None, None);
     let sid = SessionID::new_v4();
     {
         let session = session.clone();
