@@ -27,8 +27,9 @@ const APP_NAME: &str = "MerlinRemote";
 const TILE: usize = 64;
 
 static OUT: Mutex<()> = Mutex::new(());
-/// The file transfer session, to answer overwrite questions from callbacks.
-static FILE_SESSION: std::sync::OnceLock<Session<MerlinHandler>> = std::sync::OnceLock::new();
+/// The session, for callbacks that must answer it (overwrite questions,
+/// choice of the Windows session).
+static SESSION: std::sync::OnceLock<Session<MerlinHandler>> = std::sync::OnceLock::new();
 
 fn write_msg(kind: u8, payload: &[u8]) {
     let _guard = OUT.lock().unwrap();
@@ -180,7 +181,7 @@ impl InvokeUiSession for MerlinHandler {
     fn confirm_delete_files(&self, _id: i32, _i: i32, _name: String) {}
     // Merlin asks about existing files before copying: here always overwrite.
     fn override_file_confirm(&self, id: i32, file_num: i32, _to: String, is_upload: bool, _is_identical: bool) {
-        if let Some(session) = FILE_SESSION.get() {
+        if let Some(session) = SESSION.get() {
             session.set_confirm_override_file(id, file_num, true, true, is_upload);
         }
     }
@@ -208,7 +209,20 @@ impl InvokeUiSession for MerlinHandler {
         std::ptr::null()
     }
     fn next_rgba(&self, _display: usize) {}
-    fn set_multiple_windows_session(&self, _sessions: Vec<WindowsSession>) {}
+    // Installed client on a PC with several Windows sessions: the server waits
+    // for a choice before sending the screen. Pick the session it runs in
+    // (the console user's), like the default of RustDesk's dialog.
+    fn set_multiple_windows_session(&self, sessions: Vec<WindowsSession>) {
+        let list: Vec<Value> = sessions.iter().map(|s| json!({ "sid": s.sid, "name": s.name })).collect();
+        emit(json!({ "ev": "windows_sessions", "sessions": list }));
+        std::thread::spawn(|| {
+            let Some(session) = SESSION.get() else { return };
+            let current = session.lc.read().unwrap().peer_info.as_ref().map(|pi| pi.windows_sessions.current_sid);
+            if let Some(sid) = current {
+                session.send_selected_session_id(sid.to_string());
+            }
+        });
+    }
     fn set_current_display(&self, _disp_idx: i32) {}
     fn update_record_status(&self, _start: bool) {}
     fn printer_request(&self, _id: i32, _path: String) {}
@@ -306,9 +320,7 @@ pub fn run_bridge() {
         ..Default::default()
     };
     let conn_type = if str_of(&connect, "mode") == "file" { ConnType::FILE_TRANSFER } else { ConnType::DEFAULT_CONN };
-    if conn_type == ConnType::FILE_TRANSFER {
-        let _ = FILE_SESSION.set(session.clone());
-    }
+    let _ = SESSION.set(session.clone());
     session.lc.write().unwrap().initialize(id, conn_type, None, bool_of(&connect, "forceRelay"), None, None, None);
     let sid = SessionID::new_v4();
     {
