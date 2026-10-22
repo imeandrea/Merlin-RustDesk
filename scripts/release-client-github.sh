@@ -19,12 +19,12 @@ VERSION="${1:?uso: $0 <versione> file.exe file.AppImage [file.dmg]}"; shift
 auth=(-H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github+json")
 json() { python3 -c "import json,sys; d=json.load(sys.stdin); $1"; }
 
-ID="$(curl -fsS "${auth[@]}" "$API/releases/tags/v$VERSION" 2>/dev/null | json 'print(d["id"])' || true)"
+# Release già pubblicata (tag) o bozza con lo stesso nome; altrimenti una bozza nuova.
+ID="$(curl -fsS "${auth[@]}" "$API/releases/tags/v$VERSION" 2>/dev/null | json 'print(d["id"])' 2>/dev/null || true)"
+[ -n "$ID" ] || ID="$(curl -fsS "${auth[@]}" "$API/releases?per_page=100" | json "print(next((str(r['id']) for r in d if r['name']=='Merlin-RustDesk $VERSION'), ''))")"
 if [ -z "$ID" ]; then
-  ID="$(curl -fsS "${auth[@]}" -X POST "$API/releases" -d "$(python3 -c "import json; print(json.dumps({
-    'tag_name': 'v$VERSION', 'target_commitish': 'main', 'name': 'Merlin-RustDesk $VERSION',
-    'body': 'Client per i clienti Merlin-RustDesk $VERSION (versione modificata di RustDesk, AGPL-3.0). Sorgente: questo repository.',
-    'draft': False, 'prerelease': False, 'make_latest': 'true'}))")" | json 'print(d["id"])')"
+  BODY="$(VERSION="$VERSION" python3 -c 'import json,os; v=os.environ["VERSION"]; print(json.dumps({"tag_name": "v"+v, "target_commitish": "main", "name": "Merlin-RustDesk "+v, "body": "Client per i clienti Merlin-RustDesk "+v+" (versione modificata di RustDesk, AGPL-3.0). Sorgente: questo repository.", "draft": True}))')"
+  ID="$(curl -fsS "${auth[@]}" -X POST "$API/releases" -d "$BODY" | json 'print(d["id"])')"
 fi
 UPLOAD="https://uploads.github.com/repos/$REPO/releases/$ID/assets"
 for file in "$@"; do
@@ -39,4 +39,6 @@ for file in "$@"; do
   echo "==> $name ($(du -h "$file" | cut -f1))"
   curl -fsS "${auth[@]}" -H "Content-Type: application/octet-stream" --data-binary "@$file" "$UPLOAD?name=$name" >/dev/null
 done
+# Pubblicata (non più bozza) e indicata come ultima: è quella di releases/latest.
+curl -fsS "${auth[@]}" -X PATCH "$API/releases/$ID" -d '{"draft": false, "make_latest": "true"}' >/dev/null
 echo "Pubblicati in https://github.com/$REPO/releases/tag/v$VERSION"
