@@ -307,7 +307,14 @@ pub fn run_bridge() {
     };
     // Host mode: this Merlin receives assistance (own ID and config).
     let host = str_of(&connect, "cmd") == "host";
-    *hbb_common::config::APP_NAME.write().unwrap() = (if host { HOST_APP_NAME } else { APP_NAME }).to_owned();
+    // Own ID only: Merlin hides this computer from its online list even when
+    // host mode is off, so the ID of the host config is read without starting it.
+    let own_id = str_of(&connect, "cmd") == "id";
+    *hbb_common::config::APP_NAME.write().unwrap() = (if host || own_id { HOST_APP_NAME } else { APP_NAME }).to_owned();
+    if own_id {
+        emit(json!({ "ev": "id", "id": hbb_common::config::Config::get_id() }));
+        return;
+    }
     hbb_common::init_log(false, if host { "merlin-host" } else { "merlin-bridge" });
     if !crate::common::global_init() {
         return;
