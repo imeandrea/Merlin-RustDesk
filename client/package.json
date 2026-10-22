@@ -1,7 +1,7 @@
 {
   "name": "merlin-rustdesk-client",
   "productName": "Merlin-RustDesk",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "license": "AGPL-3.0-only",
   "type": "module",
