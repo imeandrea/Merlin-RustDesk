@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Merlin-RustDesk — modified version of RustDesk (https://github.com/rustdesk/rustdesk).
+// New file, Copyright (C) 2026 imeandrea.
+
 import * as React from "react"
 import { HeartIcon, SearchIcon } from "lucide-react"
 
@@ -12,7 +16,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 
 interface Lib { name: string; version: string; license: string; url: string }
 
-const SOURCE = "https://git.difonzo.net/andrea/merlin-rustdesk"
+const SOURCE = "https://github.com/imeandrea/Merlin-RustDesk"
 
 export function AboutDialog({ open, onOpenChange, version }: { open: boolean; onOpenChange: (o: boolean) => void; version: string }) {
   const [libs, setLibs] = React.useState<{ rust: Lib[]; npm: Lib[] } | null>(null)

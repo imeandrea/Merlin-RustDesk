@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Merlin-RustDesk — modified version of RustDesk (https://github.com/rustdesk/rustdesk).
+// New file, Copyright (C) 2026 imeandrea.
+
 // «Avvia con il computer» su Linux, dall'AppImage: il client viene estratto
 // in /usr/lib/merlinrustdesk (il nucleo RustDesk considera installato un
 // eseguibile sotto /usr) con la personalizzazione in fondo all'eseguibile, e

@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// SPDX-License-Identifier: AGPL-3.0-only
+// Merlin-RustDesk — modified version of RustDesk (https://github.com/rustdesk/rustdesk).
+// New file, Copyright (C) 2026 imeandrea.
+
 // Elenco delle librerie open source incluse nel client (Rust e npm, senza
 // quelle usate solo per lo sviluppo) → src/assets/licenses.json, mostrato in
 // «Informazioni e licenze». Rilanciare dopo aver cambiato le dipendenze:

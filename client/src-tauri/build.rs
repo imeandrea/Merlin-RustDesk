@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Merlin-RustDesk — modified version of RustDesk (https://github.com/rustdesk/rustdesk).
+// New file, Copyright (C) 2026 imeandrea.
+
 // Server, relay e chiave compilati nel client: dalle variabili d'ambiente o
 // dal file .env accanto a package.json (come il client RustDesk personalizzato).
 fn main() {

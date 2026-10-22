@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Merlin-RustDesk — modified version of RustDesk (https://github.com/rustdesk/rustdesk).
+// New file, Copyright (C) 2026 imeandrea.
+
 // Personalizzazione aggiunta da Merlin in fondo al file del client (vedi
 // rustdesk_client.rs in Merlin): [JSON][lunghezza u32 LE]["MERLINRD"] più
 // al massimo 7 zeri di allineamento. Senza personalizzazione: Null.

@@ -1,0 +1,25 @@
+Merlin-RustDesk
+Copyright (C) 2026 imeandrea (modifications and new files)
+
+This product is a modified version of RustDesk
+  https://github.com/rustdesk/rustdesk
+  Copyright (C) Purslane Ltd. and the RustDesk contributors
+  Licensed under the GNU Affero General Public License v3.0
+
+The whole work is distributed under the GNU Affero General Public License v3.0
+(see LICENCE). Modifications were made in October 2026; the full list is the
+git history of this repository after the upstream RustDesk history, and is
+summarised in README.md.
+
+"RustDesk" is a name of Purslane Ltd., used here only to identify the origin of
+the code. This project is not affiliated with or endorsed by RustDesk or
+Purslane Ltd.
+
+Third-party components:
+- Rust crates and npm packages used by the client: see the client's
+  "About and licences" window (client/src/assets/licenses.json).
+- JetBrains Mono font: SIL Open Font License 1.1
+  (client/src/assets/fonts/OFL.txt).
+- UI components derived from shadcn/ui (MIT License, https://ui.shadcn.com)
+  and icons from Lucide (ISC License, https://lucide.dev).
+- hbb_common (git submodule, libs/hbb_common): RustDesk, AGPL-3.0.

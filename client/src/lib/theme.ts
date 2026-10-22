@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Merlin-RustDesk — modified version of RustDesk (https://github.com/rustdesk/rustdesk).
+// New file, Copyright (C) 2026 imeandrea.
+
 // Tema: automatico dal sistema operativo oppure fissato (chiaro/scuro).
 // La scelta è una preferenza locale di questo computer.
 export type ThemeChoice = "system" | "light" | "dark"
