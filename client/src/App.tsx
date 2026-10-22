@@ -8,7 +8,7 @@ import { listen } from "@tauri-apps/api/event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { Toaster, toast } from "sonner"
 import {
-  AppWindowIcon, CheckIcon, ClipboardIcon, CopyIcon, EyeIcon, EyeOffIcon, FolderIcon, GlobeIcon, HandHelpingIcon, HeadsetIcon,
+  AppWindowIcon, ArrowBigUpDashIcon, CheckIcon, ClipboardIcon, CopyIcon, EyeIcon, EyeOffIcon, FolderIcon, GlobeIcon, HandHelpingIcon, HeadsetIcon,
   KeyRoundIcon, type LucideIcon, MessageSquareIcon, MonitorIcon, MousePointer2Icon, PowerIcon,
   RefreshCwIcon, SendIcon, ServerIcon, PhoneIcon, MailIcon, MessageCircleIcon, ClockIcon, InfoIcon, SettingsIcon, LaptopIcon, SunIcon, MoonIcon, ShieldCheckIcon, SparklesIcon, WifiOffIcon, XIcon,
 } from "lucide-react"
@@ -282,6 +282,36 @@ function AskHelp({ disabled }: { disabled: boolean }) {
   )
 }
 
+/** Bloc Maiusc attivo (letto da tasti e mouse, su tutte le piattaforme). */
+function useCapsLock(): boolean {
+  const [on, setOn] = React.useState(false)
+  React.useEffect(() => {
+    const read = (e: KeyboardEvent | MouseEvent) => { if (typeof e.getModifierState === "function") setOn(e.getModifierState("CapsLock")) }
+    const evs = ["keydown", "keyup", "mousedown"] as const
+    evs.forEach(n => window.addEventListener(n, read, true))
+    return () => evs.forEach(n => window.removeEventListener(n, read, true))
+  }, [])
+  return on
+}
+
+/** Campo segreto: mentre si scrive con Bloc Maiusc attivo compare la sua icona. */
+function SecretInput({ className, onFocus, onBlur, ...props }: React.ComponentProps<typeof Input>) {
+  const caps = useCapsLock()
+  const [focused, setFocused] = React.useState(false)
+  return (
+    <div className="relative w-full">
+      <Input {...props} className={cn(className, "pr-8")}
+        onFocus={e => { setFocused(true); onFocus?.(e) }} onBlur={e => { setFocused(false); onBlur?.(e) }} />
+      {caps && focused && (
+        <span role="status" aria-label="Bloc Maiusc attivo" title="Bloc Maiusc attivo"
+          className="pointer-events-none absolute top-1/2 right-2.5 -translate-y-1/2 text-amber-600 dark:text-amber-400">
+          <ArrowBigUpDashIcon className="size-4" />
+        </span>
+      )}
+    </div>
+  )
+}
+
 interface ServerConfig { locked: boolean; configured: boolean; assistance: boolean; server?: string; key?: string; relay?: string; api?: string; type?: "merlin" | "betterdesk" }
 
 /** Server scelto da chi usa il client (versione senza server predefinito). */
@@ -315,7 +345,7 @@ function ServerForm({ config, onSaved }: { config: ServerConfig; onSaved: () => 
         <Field>
           <FieldLabel htmlFor="srv-key">Chiave</FieldLabel>
           <div className="flex gap-1">
-            <Input id="srv-key" type={showKey ? "text" : "password"} className="bg-background font-mono text-xs" value={key} onChange={e => setKey(e.target.value)} placeholder="Chiave pubblica del server" spellCheck={false} autoComplete="off" />
+            <SecretInput id="srv-key" type={showKey ? "text" : "password"} className="bg-background font-mono text-xs" value={key} onChange={e => setKey(e.target.value)} placeholder="Chiave pubblica del server" autoComplete="off" />
             <IconButton label={showKey ? "Nascondi la chiave" : "Mostra la chiave"} onClick={() => setShowKey(v => !v)}>{showKey ? <EyeOffIcon /> : <EyeIcon />}</IconButton>
           </div>
         </Field>
@@ -438,13 +468,13 @@ function UnattendedDialog({ open, onOpenChange, permanentSet, onSaved, install, 
           </Field>
           <Field data-invalid={tooShort || undefined}>
             <FieldLabel htmlFor="ua-pw">{permanentSet ? "Nuova password permanente" : "Password permanente"}</FieldLabel>
-            <Input id="ua-pw" type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="Almeno 8 caratteri"
+            <SecretInput id="ua-pw" type="password" value={pw} onChange={e => setPw(e.target.value)} placeholder="Almeno 8 caratteri"
               aria-invalid={tooShort || undefined} className="bg-background" />
             {tooShort && <FieldDescription>Almeno 8 caratteri.</FieldDescription>}
           </Field>
           <Field data-invalid={mismatch || undefined}>
             <FieldLabel htmlFor="ua-pw2">Ripeti la password</FieldLabel>
-            <Input id="ua-pw2" type="password" value={pw2} onChange={e => setPw2(e.target.value)}
+            <SecretInput id="ua-pw2" type="password" value={pw2} onChange={e => setPw2(e.target.value)}
               aria-invalid={mismatch || undefined} className="bg-background" />
             {mismatch && <FieldDescription>Le due password non coincidono.</FieldDescription>}
           </Field>
