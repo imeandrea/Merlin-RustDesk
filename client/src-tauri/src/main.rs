@@ -73,7 +73,31 @@ fn rd_brand() -> Value {
     if let Some(o) = b.as_object_mut() {
         o.remove("server");
     }
+    if b.is_null() {
+        b = json!({});
+    }
+    b["assistance"] = json!(assistance_enabled());
     b
+}
+
+/// «Chiedi assistenza»: solo con un server API che gestisce le richieste
+/// (Merlin RustDesk Server API) e se la personalizzazione non lo toglie.
+fn assistance_enabled() -> bool {
+    let b = BRAND.get().cloned().unwrap_or(Value::Null);
+    if b["assistance"] == json!(false) {
+        return false;
+    }
+    let (_, _, _, api) = brand::server(&b);
+    let kind = b["server"]["type"].as_str().filter(|t| !t.is_empty()).unwrap_or("merlin");
+    !api.is_empty() && kind == "merlin"
+}
+
+#[tauri::command]
+async fn rd_request_assistance() -> Result<(), String> {
+    if !assistance_enabled() {
+        return Err("Richiesta di assistenza non disponibile con questo server".into());
+    }
+    rd::request_assistance().await
 }
 
 /// Nome usato per configurazione e IPC: separato da RustDesk e da Merlin.
@@ -235,14 +259,16 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            rd_info, rd_brand, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
+            rd_info, rd_brand, rd_request_assistance, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
         ])
         .setup(move |app| {
-            let (label, url, w, h) = if cm { ("cm", "index.html#cm", 400.0, 600.0) } else { ("main", "index.html", 420.0, 680.0) };
+            // Il pulsante «Chiedi assistenza» occupa una riga: finestra più alta, mai scorrimento.
+            let extra = if !cm && assistance_enabled() { 56.0 } else { 0.0 };
+            let (label, url, w, h) = if cm { ("cm", "index.html#cm", 400.0, 600.0) } else { ("main", "index.html", 420.0, 680.0 + extra) };
             let win = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
                 .title(BRAND.get().and_then(|b| b["name"].as_str()).filter(|n| !n.is_empty()).unwrap_or("Merlin-RustDesk"))
                 .inner_size(w, h)
-                .min_inner_size(400.0, if cm { 560.0 } else { 640.0 })
+                .min_inner_size(400.0, if cm { 560.0 } else { 640.0 + extra })
                 .visible(!tray_start)
                 .build()?;
             if !cm {

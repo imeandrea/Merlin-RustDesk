@@ -190,3 +190,20 @@ pub fn run_install() -> bool {
 pub fn uninstall_service() -> Result<(), String> {
     crate::platform::uninstall_me(true).map_err(|e| e.to_string())
 }
+
+/// «Chiedi assistenza» (Merlin RustDesk Server API): the server marks this ID
+/// as asking for help for a few minutes and tells the technicians.
+pub async fn request_assistance() -> Result<(), String> {
+    let api = crate::common::get_api_server(Config::get_option("api-server"), Config::get_option("custom-rendezvous-server"));
+    if api.is_empty() {
+        return Err("Server API non configurato".into());
+    }
+    let url = format!("{api}/api/assistance/request");
+    let body = json!({ "id": Config::get_id() }).to_string();
+    let (status, text) = crate::common::post_request_with_status(url, body, "").await.map_err(|e| e.to_string())?;
+    if (200..300).contains(&status) {
+        return Ok(());
+    }
+    let msg = serde_json::from_str::<Value>(&text).ok().and_then(|v| v["error"].as_str().map(str::to_string)).unwrap_or(text);
+    Err(format!("{status}: {msg}"))
+}

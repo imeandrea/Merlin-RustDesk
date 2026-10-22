@@ -8,7 +8,7 @@ import { listen } from "@tauri-apps/api/event"
 import { getCurrentWindow } from "@tauri-apps/api/window"
 import { Toaster, toast } from "sonner"
 import {
-  AppWindowIcon, CheckIcon, ClipboardIcon, CopyIcon, EyeIcon, EyeOffIcon, FolderIcon, GlobeIcon, HeadsetIcon,
+  AppWindowIcon, CheckIcon, ClipboardIcon, CopyIcon, EyeIcon, EyeOffIcon, FolderIcon, GlobeIcon, HandHelpingIcon, HeadsetIcon,
   KeyRoundIcon, type LucideIcon, MessageSquareIcon, MonitorIcon, MousePointer2Icon, PowerIcon,
   RefreshCwIcon, SendIcon, PhoneIcon, MailIcon, MessageCircleIcon, ClockIcon, InfoIcon, SettingsIcon, LaptopIcon, SunIcon, MoonIcon, ShieldCheckIcon, SparklesIcon, WifiOffIcon, XIcon,
 } from "lucide-react"
@@ -52,7 +52,8 @@ const CONTACT: Record<ContactKind, { icon: LucideIcon; tone: Tone; label: string
   note: { icon: InfoIcon, tone: "primary", label: "Nota" },
 }
 
-const groupId = (id: string) => id.replace(/(\d{3})(?=\d)/g, "$1 ")
+// ID come in RustDesk: gruppi di tre cifre da destra (1 234 567 890).
+const groupId = (id: string) => /^\d{4,}$/.test(id) ? id.replace(/\B(?=(\d{3})+$)/g, " ") : id
 const copyText = (text: string, what: string) => { void navigator.clipboard.writeText(text).then(() => toast.success(`${what} copiato`)) }
 
 export default function App() {
@@ -114,6 +115,7 @@ function MainWindow() {
                 title={online ? "Pronto per l'assistenza" : "Collegamento al server…"} />
               <Credentials id={info?.id ?? ""} password={info?.password ?? ""}
                 onNewPassword={() => { void invoke("rd_new_password").then(() => { setTimeout(refresh, 300); toast("Nuova password generata") }) }} />
+              {brand.assistance && <AskHelp disabled={!online} />}
             </>
           )}
           {!active?.authorized && (brand.contacts.length === 0 ? <Guide /> : <Contacts />)}
@@ -216,6 +218,42 @@ function Credentials({ id, password, onNewPassword }: { id: string; password: st
         <IconButton label="Nuova password" onClick={onNewPassword}><RefreshCwIcon /></IconButton>
       </div>
     </div>
+  )
+}
+
+// Il server tiene la richiesta per 5 minuti: poi si può chiedere di nuovo.
+const ASK_MS = 5 * 60_000
+
+/** «Chiedi assistenza»: avvisa i tecnici (notifica in Merlin e richiesta nella dashboard). */
+function AskHelp({ disabled }: { disabled: boolean }) {
+  const [busy, setBusy] = React.useState(false)
+  const [sentAt, setSentAt] = React.useState<number | null>(null)
+  React.useEffect(() => {
+    if (!sentAt) return
+    const t = setTimeout(() => setSentAt(null), Math.max(0, sentAt + ASK_MS - Date.now()))
+    return () => clearTimeout(t)
+  }, [sentAt])
+  const ask = async () => {
+    setBusy(true)
+    try {
+      await invoke("rd_request_assistance")
+      setSentAt(Date.now())
+      toast.success("Richiesta inviata", { description: "Il tecnico è stato avvisato: tieni aperto questo programma." })
+    } catch (e) {
+      toast.error("Richiesta non inviata", { description: String(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+  return sentAt ? (
+    <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-700 dark:text-emerald-300">
+      <CheckIcon className="size-4" /> Richiesta inviata: il tecnico è stato avvisato
+    </div>
+  ) : (
+    <Button size="lg" variant="outline" className="border-primary/50 text-primary hover:bg-primary/10 hover:text-primary h-11"
+      disabled={disabled || busy} onClick={() => void ask()}>
+      {busy ? <Spinner /> : <HandHelpingIcon />} Chiedi assistenza
+    </Button>
   )
 }
 
