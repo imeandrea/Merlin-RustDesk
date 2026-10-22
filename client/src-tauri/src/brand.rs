@@ -52,15 +52,37 @@ fn read(path: &PathBuf) -> Option<Value> {
     serde_json::from_slice(&json).ok()
 }
 
-/// Server scelto in Merlin (se c'è), altrimenti quello compilato nel client.
-pub fn server(brand: &Value) -> (String, String, String, String) {
+/// Server del client.
+pub struct Server {
+    pub host: String,
+    pub key: String,
+    pub relay: String,
+    pub api: String,
+    /// «merlin» (Merlin RustDesk Server API) o «betterdesk».
+    pub kind: String,
+}
+
+/// Server bloccato: quello della personalizzazione di Merlin o, in una versione
+/// privata, quello compilato nel client. None: lo sceglie chi usa il client.
+pub fn locked_server(brand: &Value) -> Option<Server> {
     let s = &brand["server"];
-    let pick = |k: &str, fallback: &str| s[k].as_str().filter(|v| !v.is_empty()).unwrap_or(fallback).to_string();
-    if s["host"].as_str().is_some_and(|h| !h.is_empty()) {
-        (pick("host", ""), pick("key", ""), pick("relay", ""), pick("api", env!("MERLIN_RD_API")))
-    } else {
-        (env!("MERLIN_RD_SERVER").into(), env!("MERLIN_RD_KEY").into(), env!("MERLIN_RD_RELAY").into(), env!("MERLIN_RD_API").into())
+    let get = |k: &str| s[k].as_str().unwrap_or("").trim().to_string();
+    if !get("host").is_empty() {
+        let kind = get("type");
+        return Some(Server { host: get("host"), key: get("key"), relay: get("relay"), api: get("api"), kind: if kind.is_empty() { "merlin".into() } else { kind } });
     }
+    let host = env!("MERLIN_RD_SERVER").trim();
+    if host.is_empty() {
+        return None;
+    }
+    let kind = env!("MERLIN_RD_TYPE").trim();
+    Some(Server {
+        host: host.into(),
+        key: env!("MERLIN_RD_KEY").trim().into(),
+        relay: env!("MERLIN_RD_RELAY").trim().into(),
+        api: env!("MERLIN_RD_API").trim().into(),
+        kind: if kind.is_empty() { "merlin".into() } else { kind.into() },
+    })
 }
 
 /// Logo personalizzato (PNG) dal data URL della personalizzazione.

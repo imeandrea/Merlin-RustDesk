@@ -67,9 +67,13 @@ npm ci
 VCPKG_ROOT=/path/to/vcpkg npx tauri build
 ```
 
-The client reads its default server from `client/.env` at build time
-(`MERLIN_RD_SERVER`, `MERLIN_RD_KEY`, `MERLIN_RD_RELAY`, `MERLIN_RD_API`); the
-file is not part of the repository. Linux builds need the usual RustDesk
+The published client has **no default server**: on first start it asks for the
+server ID, key, relay and API server, and they can be changed later. A client
+customised by Merlin carries its server inside the file and cannot be changed.
+A private build can compile a fixed server from `client/.env`
+(`MERLIN_RD_SERVER`, `MERLIN_RD_KEY`, `MERLIN_RD_RELAY`, `MERLIN_RD_API`,
+`MERLIN_RD_TYPE`); that file is not part of the repository and must not exist
+when building public releases. Linux builds need the usual RustDesk
 packages plus `libayatana-appindicator3-dev` and `libxdo-dev`.
 
 ## Licences

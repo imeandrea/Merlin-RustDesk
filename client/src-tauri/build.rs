@@ -2,8 +2,9 @@
 // Merlin-RustDesk — modified version of RustDesk (https://github.com/rustdesk/rustdesk).
 // New file, Copyright (C) 2026 imeandrea.
 
-// Server, relay e chiave compilati nel client: dalle variabili d'ambiente o
-// dal file .env accanto a package.json (come il client RustDesk personalizzato).
+// Server compilato nel client, solo per una versione privata: dalle variabili
+// d'ambiente o dal file .env accanto a package.json. Senza (versione pubblica)
+// il client chiede il server al primo avvio.
 fn main() {
     let mut vals = std::collections::HashMap::new();
     if let Ok(text) = std::fs::read_to_string("../.env") {
@@ -13,7 +14,7 @@ fn main() {
             }
         }
     }
-    for k in ["MERLIN_RD_SERVER", "MERLIN_RD_KEY", "MERLIN_RD_RELAY", "MERLIN_RD_API"] {
+    for k in ["MERLIN_RD_SERVER", "MERLIN_RD_KEY", "MERLIN_RD_RELAY", "MERLIN_RD_API", "MERLIN_RD_TYPE"] {
         let v = std::env::var(k).ok().or_else(|| vals.get(k).cloned()).unwrap_or_default();
         println!("cargo:rustc-env={k}={v}");
         println!("cargo:rerun-if-env-changed={k}");

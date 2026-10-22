@@ -207,3 +207,36 @@ pub async fn request_assistance() -> Result<(), String> {
     let msg = serde_json::from_str::<Value>(&text).ok().and_then(|v| v["error"].as_str().map(str::to_string)).unwrap_or(text);
     Err(format!("{status}: {msg}"))
 }
+
+/// Option with the server type of a client configured by its user.
+const SERVER_TYPE_OPTION: &str = "merlin-server-type";
+
+/// Client without a locked server: only the app name, the user's settings stay.
+pub fn init_app_name(app_name: &str) {
+    *APP_NAME.write().unwrap() = app_name.to_owned();
+}
+
+/// Server chosen by the user of the client: (server, key, relay, api, type).
+pub fn user_server() -> (String, String, String, String, String) {
+    let opt = |k: &str| Config::get_option(k);
+    let kind = opt(SERVER_TYPE_OPTION);
+    (opt("custom-rendezvous-server"), opt("key"), opt("relay-server"), opt("api-server"), if kind.is_empty() { "merlin".into() } else { kind })
+}
+
+/// Saves the server chosen by the user, here and in the running server or
+/// service (IPC), which reconnects to the new rendezvous server.
+pub fn set_user_server(server: &str, key: &str, relay: &str, api: &str, kind: &str) {
+    let values = [("custom-rendezvous-server", server), ("key", key), ("relay-server", relay), ("api-server", api), (SERVER_TYPE_OPTION, kind)];
+    // Options as the server process has them (synced), so no other option is lost.
+    let synced: std::collections::HashMap<String, String> = serde_json::from_str(&crate::ui_interface::get_options()).unwrap_or_default();
+    let mut options = if synced.is_empty() { Config::get_options() } else { synced };
+    for (k, v) in values {
+        Config::set_option(k.to_owned(), v.to_owned());
+        if v.is_empty() {
+            options.remove(k);
+        } else {
+            options.insert(k.to_owned(), v.to_owned());
+        }
+    }
+    crate::ui_interface::set_options(options);
+}

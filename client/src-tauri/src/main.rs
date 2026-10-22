@@ -80,6 +80,18 @@ fn rd_brand() -> Value {
     b
 }
 
+/// Server in uso: (server, chiave, relay, API, tipo, bloccato).
+fn current_server() -> (String, String, String, String, String, bool) {
+    let b = BRAND.get().cloned().unwrap_or(Value::Null);
+    match brand::locked_server(&b) {
+        Some(s) => (s.host, s.key, s.relay, s.api, s.kind, true),
+        None => {
+            let (h, k, r, a, t) = rd::user_server();
+            (h, k, r, a, t, false)
+        }
+    }
+}
+
 /// «Chiedi assistenza»: solo con un server API che gestisce le richieste
 /// (Merlin RustDesk Server API) e se la personalizzazione non lo toglie.
 fn assistance_enabled() -> bool {
@@ -87,9 +99,37 @@ fn assistance_enabled() -> bool {
     if b["assistance"] == json!(false) {
         return false;
     }
-    let (_, _, _, api) = brand::server(&b);
-    let kind = b["server"]["type"].as_str().filter(|t| !t.is_empty()).unwrap_or("merlin");
+    let (_, _, _, api, kind, _) = current_server();
     !api.is_empty() && kind == "merlin"
+}
+
+/// Configurazione del server per la pagina. Bloccata (personalizzazione o
+/// versione privata): non si mostra né si cambia.
+#[tauri::command]
+fn rd_server_config() -> Value {
+    let (host, key, relay, api, kind, locked) = current_server();
+    if locked {
+        return json!({ "locked": true, "configured": true, "assistance": assistance_enabled() });
+    }
+    json!({ "locked": false, "configured": !host.is_empty(), "server": host, "key": key, "relay": relay, "api": api, "type": kind, "assistance": assistance_enabled() })
+}
+
+#[tauri::command]
+fn rd_set_server_config(server: String, key: String, relay: String, api: String, kind: String) -> Result<(), String> {
+    if current_server().5 {
+        return Err("Il server di questo client non si può cambiare".into());
+    }
+    let server = server.trim();
+    if server.is_empty() {
+        return Err("Manca il server ID".into());
+    }
+    let kind = if kind == "betterdesk" { "betterdesk" } else { "merlin" };
+    let api = api.trim().trim_end_matches('/');
+    // Indirizzo dell'API senza schema: https (http per BetterDesk, che di serie non usa TLS).
+    let api = if api.is_empty() || api.starts_with("http://") || api.starts_with("https://") { api.to_string() }
+        else { format!("{}://{api}", if kind == "betterdesk" { "http" } else { "https" }) };
+    rd::set_user_server(server, key.trim(), relay.trim(), &api, kind);
+    Ok(())
 }
 
 #[tauri::command]
@@ -220,8 +260,12 @@ fn main() {
     #[cfg(target_os = "linux")]
     linux_install::prepare_extracted_env();
     let brand = BRAND.get_or_init(brand::load);
-    let (server, key, relay, api) = brand::server(brand);
-    rd::init(APP_NAME, &server, &key, &relay, &api);
+    // Server bloccato (personalizzazione o versione privata): sempre quello.
+    // Altrimenti restano le impostazioni scelte da chi usa il client.
+    match brand::locked_server(brand) {
+        Some(s) => rd::init(APP_NAME, &s.host, &s.key, &s.relay, &s.api),
+        None => rd::init_app_name(APP_NAME),
+    }
     #[cfg(windows)]
     if std::env::args().nth(1).as_deref() == Some("--merlin-install") {
         std::process::exit(if rd::run_install() { 0 } else { 1 });
@@ -259,11 +303,11 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            rd_info, rd_brand, rd_request_assistance, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
+            rd_info, rd_brand, rd_request_assistance, rd_server_config, rd_set_server_config, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
         ])
         .setup(move |app| {
             // Il pulsante «Chiedi assistenza» occupa una riga: finestra più alta, mai scorrimento.
-            let extra = if !cm && assistance_enabled() { 56.0 } else { 0.0 };
+            let extra = if !cm && (assistance_enabled() || !current_server().5) { 56.0 } else { 0.0 };
             let (label, url, w, h) = if cm { ("cm", "index.html#cm", 400.0, 600.0) } else { ("main", "index.html", 420.0, 680.0 + extra) };
             let win = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
                 .title(BRAND.get().and_then(|b| b["name"].as_str()).filter(|n| !n.is_empty()).unwrap_or("Merlin-RustDesk"))

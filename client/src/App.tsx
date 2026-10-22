@@ -10,7 +10,7 @@ import { Toaster, toast } from "sonner"
 import {
   AppWindowIcon, CheckIcon, ClipboardIcon, CopyIcon, EyeIcon, EyeOffIcon, FolderIcon, GlobeIcon, HandHelpingIcon, HeadsetIcon,
   KeyRoundIcon, type LucideIcon, MessageSquareIcon, MonitorIcon, MousePointer2Icon, PowerIcon,
-  RefreshCwIcon, SendIcon, PhoneIcon, MailIcon, MessageCircleIcon, ClockIcon, InfoIcon, SettingsIcon, LaptopIcon, SunIcon, MoonIcon, ShieldCheckIcon, SparklesIcon, WifiOffIcon, XIcon,
+  RefreshCwIcon, SendIcon, ServerIcon, PhoneIcon, MailIcon, MessageCircleIcon, ClockIcon, InfoIcon, SettingsIcon, LaptopIcon, SunIcon, MoonIcon, ShieldCheckIcon, SparklesIcon, WifiOffIcon, XIcon,
 } from "lucide-react"
 
 import logo from "@/assets/logo.png"
@@ -96,6 +96,12 @@ function MainWindow() {
   }, [installing])
   const online = (info?.status ?? 0) > 0
   const offline = (info?.status ?? 0) < 0
+  // Server: bloccato (personalizzazione o versione privata) o scelto da chi usa il client.
+  const [server, setServer] = React.useState<ServerConfig | null>(null)
+  const [serverOpen, setServerOpen] = React.useState(false)
+  const loadServer = React.useCallback(() => { void invoke<ServerConfig>("rd_server_config").then(setServer).catch(() => {}) }, [])
+  React.useEffect(loadServer, [loadServer])
+  const needsSetup = server !== null && !server.locked && !server.configured
 
   return (
     <div className="bg-background text-foreground relative flex h-svh flex-col">
@@ -103,7 +109,13 @@ function MainWindow() {
       {/* Mai scorrimento: tutto entra nella finestra (altezza minima della finestra). */}
       <main className="min-h-0 flex-1 overflow-hidden">
         <div className="flex h-full flex-col justify-center gap-5 px-5 py-4">
-          {active?.authorized ? (
+          {needsSetup ? (
+            <div className="flex flex-col gap-4">
+              <Hero tiles={[["sky", ServerIcon], ["primary", KeyRoundIcon], ["emerald", GlobeIcon]]}
+                title="Configura il server" text="Questo client non ha un server predefinito: inserisci i dati che ti ha dato il tuo tecnico." />
+              <ServerForm config={server} onSaved={() => { loadServer(); setTimeout(refresh, 500) }} />
+            </div>
+          ) : active?.authorized ? (
             <Session client={active} since={conn.since[active.id] ?? Date.now()} chat={conn.chat[active.id] ?? []} compact
               onSend={text => conn.actions.send(active, text)} onEnd={() => conn.actions.close(active)} />
           ) : offline ? (
@@ -115,10 +127,10 @@ function MainWindow() {
                 title={online ? "Pronto per l'assistenza" : "Collegamento al server…"} />
               <Credentials id={info?.id ?? ""} password={info?.password ?? ""}
                 onNewPassword={() => { void invoke("rd_new_password").then(() => { setTimeout(refresh, 300); toast("Nuova password generata") }) }} />
-              {brand.assistance && <AskHelp disabled={!online} />}
+              {server?.assistance && <AskHelp disabled={!online} />}
             </>
           )}
-          {!active?.authorized && (brand.contacts.length === 0 ? <Guide /> : <Contacts />)}
+          {!needsSetup && !active?.authorized && (brand.contacts.length === 0 ? <Guide /> : <Contacts />)}
         </div>
       </main>
       {/* Richiesta di collegamento: pannello dal basso, non modale (ID e password restano visibili). */}
@@ -127,6 +139,9 @@ function MainWindow() {
       )}
       <footer className="flex h-10 shrink-0 items-center gap-2 border-t px-2">
         <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setSettingsOpen(true)}><SettingsIcon /> Accesso non presidiato</Button>
+        {server && !server.locked && server.configured && (
+          <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setServerOpen(true)}><ServerIcon /> Server</Button>
+        )}
         <ThemeSwitch className="ml-auto" />
         <Tooltip>
           <TooltipTrigger asChild>
@@ -137,6 +152,16 @@ function MainWindow() {
           <TooltipContent>Informazioni e licenze</TooltipContent>
         </Tooltip>
       </footer>
+      <Dialog open={serverOpen} onOpenChange={setServerOpen}>
+        <DialogContent className="gap-5 sm:max-w-sm">
+          <DialogHeader className="items-center gap-3 text-center">
+            <Tiles tiles={[["sky", ServerIcon], ["primary", KeyRoundIcon], ["emerald", GlobeIcon]]} />
+            <DialogTitle>Server</DialogTitle>
+            <DialogDescription>Il server di assistenza usato da questo client.</DialogDescription>
+          </DialogHeader>
+          {server && <ServerForm config={server} onSaved={() => { setServerOpen(false); loadServer(); setTimeout(refresh, 500) }} />}
+        </DialogContent>
+      </Dialog>
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} version={info?.version ?? ""} />
       <UnattendedDialog open={settingsOpen} onOpenChange={setSettingsOpen} permanentSet={!!info?.permanentSet} onSaved={refresh}
         install={info?.install ?? "unsupported"} installing={installing}
@@ -254,6 +279,65 @@ function AskHelp({ disabled }: { disabled: boolean }) {
       disabled={disabled || busy} onClick={() => void ask()}>
       {busy ? <Spinner /> : <HandHelpingIcon />} Chiedi assistenza
     </Button>
+  )
+}
+
+interface ServerConfig { locked: boolean; configured: boolean; assistance: boolean; server?: string; key?: string; relay?: string; api?: string; type?: "merlin" | "betterdesk" }
+
+/** Server scelto da chi usa il client (versione senza server predefinito). */
+function ServerForm({ config, onSaved }: { config: ServerConfig; onSaved: () => void }) {
+  const [server, setServer] = React.useState(config.server ?? "")
+  const [key, setKey] = React.useState(config.key ?? "")
+  const [relay, setRelay] = React.useState(config.relay ?? "")
+  const [api, setApi] = React.useState(config.api ?? "")
+  const [kind, setKind] = React.useState<"merlin" | "betterdesk">(config.type ?? "merlin")
+  const [showKey, setShowKey] = React.useState(false)
+  const [busy, setBusy] = React.useState(false)
+  const save = async () => {
+    setBusy(true)
+    try {
+      await invoke("rd_set_server_config", { server, key, relay, api, kind })
+      toast.success("Server salvato")
+      onSaved()
+    } catch (e) {
+      toast.error("Server non salvato", { description: String(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <form className="flex flex-col gap-4" onSubmit={e => { e.preventDefault(); void save() }}>
+      <FieldGroup className="bg-muted/50 gap-3 rounded-xl p-3">
+        <Field>
+          <FieldLabel htmlFor="srv-id">Server ID</FieldLabel>
+          <Input id="srv-id" className="bg-background" value={server} onChange={e => setServer(e.target.value)} placeholder="assistenza.esempio.it" spellCheck={false} autoComplete="off" autoFocus />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="srv-key">Chiave</FieldLabel>
+          <div className="flex gap-1">
+            <Input id="srv-key" type={showKey ? "text" : "password"} className="bg-background font-mono text-xs" value={key} onChange={e => setKey(e.target.value)} placeholder="Chiave pubblica del server" spellCheck={false} autoComplete="off" />
+            <IconButton label={showKey ? "Nascondi la chiave" : "Mostra la chiave"} onClick={() => setShowKey(v => !v)}>{showKey ? <EyeOffIcon /> : <EyeIcon />}</IconButton>
+          </div>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="srv-relay">Server relay</FieldLabel>
+          <Input id="srv-relay" className="bg-background" value={relay} onChange={e => setRelay(e.target.value)} placeholder="Facoltativo: vuoto = come il server ID" spellCheck={false} autoComplete="off" />
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="srv-api">Server API</FieldLabel>
+          <Input id="srv-api" className="bg-background" value={api} onChange={e => setApi(e.target.value)} placeholder="Facoltativo: api.esempio.it" spellCheck={false} autoComplete="off" />
+          <div className="flex gap-1">
+            {(["merlin", "betterdesk"] as const).map(k => (
+              <Button key={k} type="button" size="sm" variant={kind === k ? "secondary" : "ghost"} className="flex-1" aria-pressed={kind === k} onClick={() => setKind(k)}>
+                {k === "merlin" ? "Merlin RustDesk" : "BetterDesk"}
+              </Button>
+            ))}
+          </div>
+          <FieldDescription>Tipo del server API: con Merlin RustDesk c'è anche il pulsante «Chiedi assistenza».</FieldDescription>
+        </Field>
+      </FieldGroup>
+      <Button type="submit" disabled={busy || !server.trim()}>{busy ? <Spinner /> : <CheckIcon />} Salva</Button>
+    </form>
   )
 }
 
