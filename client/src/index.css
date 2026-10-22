@@ -271,3 +271,16 @@
 /* Client: niente selezione del testo, tranne dove serve (select-text) e nei campi. */
 html, body { -webkit-user-select: none; user-select: none; overflow: hidden; }
 input, textarea, .select-text { -webkit-user-select: text; user-select: text; }
+
+/* Campi password: niente indicatore di Bloc Maiusc e pulsante del portachiavi
+   di WebKit (macOS) dentro il campo; il Bloc Maiusc lo segnala PasswordInput. */
+input::-webkit-caps-lock-indicator,
+input::-webkit-credentials-auto-fill-button,
+input::-webkit-strong-password-auto-fill-button {
+  content: none !important;
+  display: none !important;
+  visibility: hidden;
+  pointer-events: none;
+  width: 0;
+  margin: 0;
+}
