@@ -14,11 +14,15 @@ fn main() {
             }
         }
     }
+    // Versione pubblica esplicita: niente server compilato anche se c'è un .env
+    // (su Windows una variabile vuota non esiste, quindi non basterebbe azzerarle).
+    let public = std::env::var("MERLIN_RD_PUBLIC").is_ok_and(|v| v == "1");
     for k in ["MERLIN_RD_SERVER", "MERLIN_RD_KEY", "MERLIN_RD_RELAY", "MERLIN_RD_API", "MERLIN_RD_TYPE"] {
-        let v = std::env::var(k).ok().or_else(|| vals.get(k).cloned()).unwrap_or_default();
+        let v = if public { String::new() } else { std::env::var(k).ok().or_else(|| vals.get(k).cloned()).unwrap_or_default() };
         println!("cargo:rustc-env={k}={v}");
         println!("cargo:rerun-if-env-changed={k}");
     }
+    println!("cargo:rerun-if-env-changed=MERLIN_RD_PUBLIC");
     println!("cargo:rerun-if-changed=../.env");
     tauri_build::build()
 }
