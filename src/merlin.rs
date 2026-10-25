@@ -10,8 +10,10 @@
 //!   - `J`: JSON event (`{"ev": …}`);
 //!   - `F`: changed screen area, `[x y w h dw dh: u16 LE][RGBA]`.
 //!
-//! The session runs in its own config directory (APP_NAME), so it never
-//! touches a RustDesk installed on the same machine.
+//! Every mode runs in Merlin's own config directory (HOST_APP_NAME), so it
+//! never touches a RustDesk installed on the same machine. Sessions share it
+//! with host mode, as RustDesk's UI and server share one install: the peer
+//! sees Merlin's host ID, and switching sides reaches the host server via IPC.
 
 use std::{
     io::{BufRead, Write},
@@ -27,8 +29,7 @@ use crate::{
     ui_session_interface::{io_loop, InvokeUiSession, Session},
 };
 
-const APP_NAME: &str = "MerlinRemote";
-/// Host mode (Merlin receives assistance): separate config, ID and IPC.
+/// Config, ID and IPC of Merlin (host mode and sessions).
 const HOST_APP_NAME: &str = "MerlinHost";
 const TILE: usize = 64;
 
@@ -205,7 +206,11 @@ impl InvokeUiSession for MerlinHandler {
     fn cancel_msgbox(&self, tag: &str) {
         emit(json!({ "ev": "cancel_msgbox", "tag": tag }));
     }
-    fn switch_back(&self, _id: &str) {}
+    /// The peer (connected to us by switching sides) gives control back:
+    /// Merlin answers with `switch_sides`, as RustDesk's UI does.
+    fn switch_back(&self, _id: &str) {
+        emit(json!({ "ev": "switch_back" }));
+    }
     fn portable_service_running(&self, _running: bool) {}
     fn on_voice_call_started(&self) {}
     fn on_voice_call_closed(&self, _reason: &str) {}
@@ -242,6 +247,15 @@ fn str_of<'a>(v: &'a Value, k: &str) -> &'a str {
 
 fn bool_of(v: &Value, k: &str) -> bool {
     v.get(k).and_then(|x| x.as_bool()).unwrap_or(false)
+}
+
+fn app_name_for(_cmd: &str) -> &'static str {
+    HOST_APP_NAME
+}
+
+/// Code of a switch-sides login (empty or missing: normal login).
+fn switch_uuid_of(cmd: &Value) -> Option<String> {
+    Some(str_of(cmd, "switchUuid").to_owned()).filter(|u| !u.is_empty())
 }
 
 fn job_of(v: &Value) -> i32 {
@@ -284,6 +298,10 @@ fn handle_command(session: &Session<MerlinHandler>, sid: &SessionID, cmd: &Value
         "refresh" => session.refresh_video(-1),
         "reconnect" => session.reconnect(false),
         "close" => session.close(),
+        "switch_sides" => {
+            let session = session.clone();
+            std::thread::spawn(move || session.switch_sides());
+        }
         // File transfer (session started with "mode":"file"); paths are remote.
         "fs_list" => session.read_remote_dir(str_of(cmd, "path").to_owned(), true),
         "fs_send" => session.send_files(job_of(cmd), 0, str_of(cmd, "path").to_owned(), str_of(cmd, "to").to_owned(), 0, true, bool_of(cmd, "download")),
@@ -310,7 +328,7 @@ pub fn run_bridge() {
     // Own ID only: Merlin hides this computer from its online list even when
     // host mode is off, so the ID of the host config is read without starting it.
     let own_id = str_of(&connect, "cmd") == "id";
-    *hbb_common::config::APP_NAME.write().unwrap() = (if host || own_id { HOST_APP_NAME } else { APP_NAME }).to_owned();
+    *hbb_common::config::APP_NAME.write().unwrap() = app_name_for(str_of(&connect, "cmd")).to_owned();
     if own_id {
         emit(json!({ "ev": "id", "id": hbb_common::config::Config::get_id() }));
         return;
@@ -339,7 +357,7 @@ pub fn run_bridge() {
     };
     let conn_type = if str_of(&connect, "mode") == "file" { ConnType::FILE_TRANSFER } else { ConnType::DEFAULT_CONN };
     let _ = SESSION.set(session.clone());
-    session.lc.write().unwrap().initialize(id, conn_type, None, bool_of(&connect, "forceRelay"), None, None, None);
+    session.lc.write().unwrap().initialize(id, conn_type, switch_uuid_of(&connect), bool_of(&connect, "forceRelay"), None, None, None);
     let sid = SessionID::new_v4();
     {
         let session = session.clone();
@@ -383,6 +401,7 @@ fn run_host(cfg: &Value, lines: impl Iterator<Item = std::io::Result<String>>) {
     apply_server(cfg);
     mc::start_status_sync();
     mc::start_cm(|ev| emit(json!({ "ev": "cm", "data": ev })));
+    mc::set_switch_sides_handler(|id, uuid| emit(json!({ "ev": "switch_connect", "id": id, "uuid": uuid })));
     std::thread::spawn(|| crate::start_server(false, false));
     std::thread::spawn(|| loop {
         emit(json!({
@@ -404,10 +423,30 @@ fn run_host(cfg: &Value, lines: impl Iterator<Item = std::io::Result<String>>) {
             "authorize" => mc::cm_authorize(id),
             "close" => mc::cm_close(id),
             "chat" => mc::cm_send_chat(id, str_of(&cmd, "text").to_owned()),
+            "switch_back" => mc::cm_switch_back(id),
             "permission" => mc::cm_switch_permission(id, str_of(&cmd, "name").to_owned(), bool_of(&cmd, "enabled")),
             other => log::debug!("merlin host: unknown command {other}"),
         }
     }
     // stdin closed: Merlin turned assistance off or quit.
     std::process::exit(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_mode_uses_the_host_config() {
+        for cmd in ["connect", "host", "id"] {
+            assert_eq!(app_name_for(cmd), HOST_APP_NAME);
+        }
+    }
+
+    #[test]
+    fn switch_uuid_only_when_given() {
+        assert_eq!(switch_uuid_of(&json!({ "switchUuid": "" })), None);
+        assert_eq!(switch_uuid_of(&json!({})), None);
+        assert_eq!(switch_uuid_of(&json!({ "switchUuid": "u" })), Some("u".to_owned()));
+    }
 }
