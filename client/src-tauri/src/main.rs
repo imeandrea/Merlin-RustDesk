@@ -356,13 +356,14 @@ fn main() {
             rd_info, rd_brand, rd_connect, rd_request_assistance, rd_server_config, rd_set_server_config, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
         ])
         .setup(move |app| {
-            // Il pulsante «Chiedi assistenza» occupa una riga: finestra più alta, mai scorrimento.
-            let extra = if !cm && (assistance_enabled() || !current_server().5) { 56.0 } else { 0.0 };
-            let (label, url, w, h) = if cm { ("cm", "index.html#cm", 400.0, 600.0) } else { ("main", "index.html", 520.0, 680.0 + extra) };
+            // Pulsanti sotto le credenziali (finestra più alta, mai scorrimento): «Controlla un PC»
+            // sempre (44 px + spaziatura), «Chiedi assistenza» sopra se c'è (44 + 8).
+            let extra = if cm { 0.0 } else { 64.0 + if assistance_enabled() || !current_server().5 { 52.0 } else { 0.0 } };
+            let (label, url, w, h) = if cm { ("cm", "index.html#cm", 400.0, 600.0) } else { ("main", "index.html", 420.0, 680.0 + extra) };
             let win = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
                 .title(BRAND.get().and_then(|b| b["name"].as_str()).filter(|n| !n.is_empty()).unwrap_or("Merlin-RustDesk"))
                 .inner_size(w, h)
-                .min_inner_size(if cm { 400.0 } else { 500.0 }, if cm { 560.0 } else { 640.0 + extra })
+                .min_inner_size(400.0, if cm { 560.0 } else { 640.0 + extra })
                 .visible(!tray_start)
                 .build()?;
             if !cm {

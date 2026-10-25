@@ -110,7 +110,7 @@ function MainWindow() {
       <Header status={info?.status ?? 0} />
       {/* Mai scorrimento: tutto entra nella finestra (altezza minima della finestra). */}
       <main className="min-h-0 flex-1 overflow-hidden">
-        <div className="flex h-full flex-col justify-center gap-5 px-5 py-4">
+        <div className="flex h-full flex-col justify-start gap-5 px-5 pt-2 pb-4">
           {needsSetup ? (
             <div className="flex flex-col gap-4">
               <Hero tiles={[["sky", ServerIcon], ["primary", KeyRoundIcon], ["emerald", GlobeIcon]]}
@@ -129,7 +129,12 @@ function MainWindow() {
                 title={online ? "Pronto per l'assistenza" : "Collegamento al server…"} />
               <Credentials id={info?.id ?? ""} password={info?.password ?? ""}
                 onNewPassword={() => { void invoke("rd_new_password").then(() => { setTimeout(refresh, 300); toast("Nuova password generata") }) }} />
-              {server?.assistance && <AskHelp disabled={!online} />}
+              <div className="flex flex-col gap-2">
+                {server?.assistance && <AskHelp disabled={!online} />}
+                <Button size="lg" variant="outline" className="h-11" disabled={!online} onClick={() => setConnectOpen(true)}>
+                  <MonitorIcon /> Controlla un PC
+                </Button>
+              </div>
             </>
           )}
           {!needsSetup && !active?.authorized && (brand.contacts.length === 0 ? <Guide /> : <Contacts />)}
@@ -144,7 +149,6 @@ function MainWindow() {
         {server && !server.locked && server.configured && (
           <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setServerOpen(true)}><ServerIcon /> Server</Button>
         )}
-        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setConnectOpen(true)}><MonitorIcon /> Controlla un PC</Button>
         <ThemeSwitch className="ml-auto" />
         <Tooltip>
           <TooltipTrigger asChild>
