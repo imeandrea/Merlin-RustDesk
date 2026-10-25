@@ -253,6 +253,16 @@ mod tests {
         assert!(minisign_verify::PublicKey::decode(&text).is_ok());
     }
 
+    /// Prova della catena di firma vera (manuale): UPDATER_FILE firmato con la
+    /// funzione dello script di pubblicazione, firma in UPDATER_SIG.
+    #[test]
+    #[ignore]
+    fn release_signature_from_env() {
+        let data = std::fs::read(std::env::var("UPDATER_FILE").unwrap()).unwrap();
+        let sig = std::fs::read_to_string(std::env::var("UPDATER_SIG").unwrap()).unwrap();
+        verify(&data, &sig, PUBLIC_KEY).unwrap();
+    }
+
     #[test]
     fn signature_is_checked() {
         assert!(verify(b"ciao merlin", TEST_SIG, TEST_PUB).is_ok());

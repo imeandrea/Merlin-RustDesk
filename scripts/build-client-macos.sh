@@ -41,4 +41,9 @@ if [ -n "$SRV" ]; then
   if [ "$VARIANT" = pubblico ] && [ "$found" != 0 ]; then echo "ERRORE: server privato nella versione pubblica" >&2; exit 1; fi
   if [ "$VARIANT" = privato ] && [ "$found" = 0 ]; then echo "ERRORE: server mancante nella versione privata" >&2; exit 1; fi
 fi
+# App compressa per l'aggiornamento automatico (solo la pubblica si aggiorna).
+if [ "$VARIANT" = pubblico ]; then
+  tar -C "$(dirname "$APP")" -czf "$OUT/Merlin-RustDesk_${VERSION}_aarch64.app.tar.gz" "$(basename "$APP")"
+  echo "ARTEFATTO: $OUT/Merlin-RustDesk_${VERSION}_aarch64.app.tar.gz"
+fi
 echo "ARTEFATTO: $OUT/Merlin-RustDesk_${VERSION}${SUFFIX}_aarch64.dmg"

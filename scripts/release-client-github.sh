@@ -4,11 +4,13 @@
 # pubblico (sorgente e programmi nello stesso posto, come chiede la AGPL).
 # Merlin li scarica da .../releases/latest/download/<nome> (senza token).
 #
-#   GITHUB_TOKEN=xxxx scripts/release-client-github.sh <versione> client.exe client.AppImage [client.dmg]
+#   GITHUB_TOKEN=xxxx scripts/release-client-github.sh <versione> client.exe client.AppImage [client.dmg] [client.app.tar.gz]
 #
 # Crea (o riusa) la release v<versione> e vi carica i file con nomi fissi:
-# Merlin-RustDesk.exe, Merlin-RustDesk.AppImage, Merlin-RustDesk.dmg.
-# Un file già presente con lo stesso nome viene sostituito.
+# Merlin-RustDesk.exe, Merlin-RustDesk.AppImage, Merlin-RustDesk.dmg,
+# Merlin-RustDesk.app.tar.gz. Un file già presente con lo stesso nome viene
+# sostituito. Per l'aggiornamento automatico del client firma exe, AppImage e
+# app.tar.gz con secrets/client-updater.key (solo sul Mac) e carica latest.json.
 set -euo pipefail
 
 REPO="imeandrea/Merlin-RustDesk"
@@ -27,18 +29,39 @@ if [ -z "$ID" ]; then
   ID="$(curl -fsS "${auth[@]}" -X POST "$API/releases" -d "$BODY" | json 'print(d["id"])')"
 fi
 UPLOAD="https://uploads.github.com/repos/$REPO/releases/$ID/assets"
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+KEY="$ROOT/secrets/client-updater.key"
+[ -r "$KEY" ] || { echo "manca $KEY (chiave degli aggiornamenti)" >&2; exit 1; }
+WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
+FEED='{}'
+sign() {  # firma minisign (formato tauri) di $1, stampata in base64
+  ( cd "$ROOT/client" && TAURI_SIGNING_PRIVATE_KEY_PATH="$KEY" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" npx --no-install tauri signer sign "$1" >/dev/null )
+  cat "$1.sig"; rm -f "$1.sig"
+}
+upload() {  # $1 file, $2 nome nella release
+  old="$(curl -fsS "${auth[@]}" "$API/releases/$ID/assets?per_page=100" | json "print(next((str(a['id']) for a in d if a['name']=='$2'), ''))")"
+  [ -n "$old" ] && curl -fsS "${auth[@]}" -X DELETE "$API/releases/assets/$old" >/dev/null
+  echo "==> $2 ($(du -h "$1" | cut -f1))"
+  curl -fsS "${auth[@]}" -H "Content-Type: application/octet-stream" --data-binary "@$1" "$UPLOAD?name=$2" >/dev/null
+}
 for file in "$@"; do
+  platform=""
   case "$file" in
-    *.exe) name="Merlin-RustDesk.exe" ;;
-    *.AppImage|*.appimage) name="Merlin-RustDesk.AppImage" ;;
+    *.exe) name="Merlin-RustDesk.exe"; platform="windows-x86_64" ;;
+    *.AppImage|*.appimage) name="Merlin-RustDesk.AppImage"; platform="linux-x86_64" ;;
     *.dmg) name="Merlin-RustDesk.dmg" ;;
+    *.app.tar.gz) name="Merlin-RustDesk.app.tar.gz"; platform="darwin-aarch64" ;;
     *) echo "estensione non prevista: $file" >&2; exit 1 ;;
   esac
-  old="$(curl -fsS "${auth[@]}" "$API/releases/$ID/assets?per_page=100" | json "print(next((str(a['id']) for a in d if a['name']=='$name'), ''))")"
-  [ -n "$old" ] && curl -fsS "${auth[@]}" -X DELETE "$API/releases/assets/$old" >/dev/null
-  echo "==> $name ($(du -h "$file" | cut -f1))"
-  curl -fsS "${auth[@]}" -H "Content-Type: application/octet-stream" --data-binary "@$file" "$UPLOAD?name=$name" >/dev/null
+  if [ -n "$platform" ]; then
+    sig="$(sign "$file")"
+    FEED="$(FEED="$FEED" P="$platform" U="https://github.com/$REPO/releases/download/v$VERSION/$name" S="$sig" python3 -c 'import json,os; d=json.loads(os.environ["FEED"]); d[os.environ["P"]]={"url":os.environ["U"],"signature":os.environ["S"]}; print(json.dumps(d))')"
+  fi
+  upload "$file" "$name"
 done
+# Feed dell'aggiornamento automatico (il client legge releases/latest/download/latest.json).
+FEED="$FEED" VERSION="$VERSION" python3 -c 'import json,os; print(json.dumps({"version": os.environ["VERSION"], "notes": "", "platforms": json.loads(os.environ["FEED"])}, indent=2))' > "$WORK/latest.json"
+upload "$WORK/latest.json" "latest.json"
 # Pubblicata (non più bozza) e indicata come ultima: è quella di releases/latest.
 curl -fsS "${auth[@]}" -X PATCH "$API/releases/$ID" -d '{"draft": false, "make_latest": "true"}' >/dev/null
 echo "Pubblicati in https://github.com/$REPO/releases/tag/v$VERSION"
