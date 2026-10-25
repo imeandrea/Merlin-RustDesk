@@ -35,16 +35,30 @@ fn push_cm_event(app: &AppHandle, label: &str, mut ev: Value) {
         seq
     };
     // Richiesta in arrivo: la finestra torna in primo piano (anche dalla
-    // tray). Collegamento accettato (anche con la password): si riduce a icona.
+    // tray) e ci resta finché la richiesta è in attesa: su Windows un processo
+    // in secondo piano non può prendersi il focus (dopo la UAC la finestra
+    // restava dietro le altre). Collegamento accettato (anche con la
+    // password): si riduce a icona.
     if ev["ev"] == "add" {
         if let Some(w) = app.get_webview_window(label) {
             if ev["client"]["authorized"].as_bool() == Some(true) {
+                if label == "main" {
+                    let _ = w.set_always_on_top(false);
+                }
                 let _ = w.minimize();
             } else {
                 let _ = w.show();
                 let _ = w.unminimize();
+                let _ = w.set_always_on_top(true);
                 let _ = w.set_focus();
+                let _ = w.request_user_attention(Some(tauri::UserAttentionType::Critical));
             }
+        }
+    }
+    // Richiesta chiusa o rifiutata: la finestra principale torna normale.
+    if ev["ev"] == "remove" && label == "main" {
+        if let Some(w) = app.get_webview_window(label) {
+            let _ = w.set_always_on_top(false);
         }
     }
     // Messaggio del tecnico in chat: la finestra torna visibile.
