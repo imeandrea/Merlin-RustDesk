@@ -69,6 +69,8 @@ mod ui_session_interface;
 pub mod merlin;
 #[cfg(feature = "merlin")]
 pub mod merlin_client;
+#[cfg(feature = "merlin")]
+pub mod merlin_viewer;
 
 mod hbbs_http;
 

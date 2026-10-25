@@ -14,6 +14,7 @@
 mod brand;
 #[cfg(target_os = "linux")]
 mod linux_install;
+mod viewer;
 
 use std::sync::{Mutex, OnceLock};
 
@@ -270,6 +271,12 @@ fn main() {
     if std::env::args().nth(1).as_deref() == Some("--merlin-install") {
         std::process::exit(if rd::run_install() { 0 } else { 1 });
     }
+    let context = tauri::generate_context!();
+    // Inversione di ruolo: finestra di visione del computer del tecnico, processo a sé.
+    if let Some((peer, uuid)) = viewer::parse_args(&std::env::args().collect::<Vec<_>>()) {
+        let name = brand["name"].as_str().filter(|n| !n.is_empty()).unwrap_or("Merlin-RustDesk").to_owned();
+        return viewer::run(&name, peer, uuid, context);
+    }
     // `--tray`: lo lancia il servizio all'accesso dell'utente (client
     // installato). Al posto della tray di RustDesk parte questa interfaccia,
     // nascosta, con la sua icona nella tray.
@@ -334,6 +341,6 @@ fn main() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("avvio del client");
 }

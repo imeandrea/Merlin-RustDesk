@@ -4,9 +4,11 @@
 
 import { createRoot } from "react-dom/client"
 import App from "./App"
+import Viewer from "./viewer"
 import { applyTheme } from "./lib/theme"
 import { loadBrand } from "./lib/brand"
 import "./index.css"
 
 applyTheme()
-void loadBrand().finally(() => createRoot(document.getElementById("root")!).render(<App />))
+// `#viewer`: finestra di visione dell'inversione di ruolo (processo a sé).
+void loadBrand().finally(() => createRoot(document.getElementById("root")!).render(window.location.hash === "#viewer" ? <Viewer /> : <App />))
