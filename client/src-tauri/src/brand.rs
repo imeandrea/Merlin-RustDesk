@@ -65,11 +65,8 @@ pub struct Server {
 /// Server bloccato: quello della personalizzazione di Merlin o, in una versione
 /// privata, quello compilato nel client. None: lo sceglie chi usa il client.
 pub fn locked_server(brand: &Value) -> Option<Server> {
-    let s = &brand["server"];
-    let get = |k: &str| s[k].as_str().unwrap_or("").trim().to_string();
-    if !get("host").is_empty() {
-        let kind = get("type");
-        return Some(Server { host: get("host"), key: get("key"), relay: get("relay"), api: get("api"), kind: if kind.is_empty() { "merlin".into() } else { kind } });
+    if let Some(s) = brand_server(brand) {
+        return (!server_editable(brand)).then_some(s);
     }
     let host = env!("MERLIN_RD_SERVER").trim();
     if host.is_empty() {
@@ -83,6 +80,33 @@ pub fn locked_server(brand: &Value) -> Option<Server> {
         api: env!("MERLIN_RD_API").trim().into(),
         kind: if kind.is_empty() { "merlin".into() } else { kind.into() },
     })
+}
+
+/// Server della personalizzazione di Merlin, se c'è.
+fn brand_server(brand: &Value) -> Option<Server> {
+    let s = &brand["server"];
+    let get = |k: &str| s[k].as_str().unwrap_or("").trim().to_string();
+    if get("host").is_empty() {
+        return None;
+    }
+    let kind = get("type");
+    Some(Server { host: get("host"), key: get("key"), relay: get("relay"), api: get("api"), kind: if kind.is_empty() { "merlin".into() } else { kind } })
+}
+
+/// Il cliente può cambiare il server della personalizzazione (predefinito: no).
+fn server_editable(brand: &Value) -> bool {
+    brand["serverEditable"] == Value::Bool(true)
+}
+
+/// Server modificabile: quello della personalizzazione è solo il punto di
+/// partenza, finché chi usa il client non ne sceglie un altro.
+pub fn initial_server(brand: &Value) -> Option<Server> {
+    brand_server(brand).filter(|_| server_editable(brand))
+}
+
+/// «Controlla un PC» (connessioni verso altri computer): la personalizzazione può toglierlo.
+pub fn outgoing_enabled(brand: &Value) -> bool {
+    brand["outgoing"] != Value::Bool(false)
 }
 
 /// Logo personalizzato (PNG) dal data URL della personalizzazione.
@@ -103,4 +127,37 @@ pub fn raw_tail(path: &Path) -> Option<Vec<u8>> {
     }
     let len = u32::from_le_bytes(data[end - 12..end - 8].try_into().ok()?) as usize;
     (len + 12 <= end).then(|| data[end - 12 - len..end].to_vec())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn brand(extra: Value) -> Value {
+        let mut b = json!({ "server": { "host": "rd.esempio.it", "key": "K", "relay": "", "api": "https://api.esempio.it", "type": "merlin" } });
+        b.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        b
+    }
+
+    #[test]
+    fn merlin_server_is_locked_by_default() {
+        let b = brand(json!({}));
+        assert_eq!(locked_server(&b).map(|s| s.host).as_deref(), Some("rd.esempio.it"));
+        assert!(initial_server(&b).is_none());
+    }
+
+    #[test]
+    fn editable_server_is_only_the_starting_point() {
+        let b = brand(json!({ "serverEditable": true }));
+        assert!(locked_server(&b).is_none());
+        assert_eq!(initial_server(&b).map(|s| s.host).as_deref(), Some("rd.esempio.it"));
+    }
+
+    #[test]
+    fn outgoing_connections_can_be_turned_off() {
+        assert!(outgoing_enabled(&Value::Null));
+        assert!(outgoing_enabled(&brand(json!({}))));
+        assert!(!outgoing_enabled(&brand(json!({ "outgoing": false }))));
+    }
 }

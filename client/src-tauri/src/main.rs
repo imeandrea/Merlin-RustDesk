@@ -93,7 +93,13 @@ fn rd_brand() -> Value {
         b = json!({});
     }
     b["assistance"] = json!(assistance_enabled());
+    b["outgoing"] = json!(outgoing_enabled());
     b
+}
+
+/// «Controlla un PC»: sì, salvo che la personalizzazione lo tolga.
+fn outgoing_enabled() -> bool {
+    BRAND.get().is_none_or(brand::outgoing_enabled)
 }
 
 /// Server in uso: (server, chiave, relay, API, tipo, bloccato).
@@ -244,6 +250,9 @@ fn rd_exit(app: AppHandle) {
 #[tauri::command]
 fn rd_connect(id: String, password: String) -> Result<(), String> {
     use std::io::Write;
+    if !outgoing_enabled() {
+        return Err("Questo client non può controllare altri computer".into());
+    }
     let id: String = id.chars().filter(|c| !c.is_whitespace()).collect();
     if id.is_empty() {
         return Err("ID mancante".into());
@@ -321,6 +330,27 @@ fn make_tray(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Riduce la finestra se lo schermo (area di lavoro) è più piccolo.
+fn fit_to_screen(win: &tauri::WebviewWindow, w: f64, h: f64) {
+    let Ok(Some(m)) = win.current_monitor() else { return };
+    let area = m.work_area().size.to_logical::<f64>(m.scale_factor());
+    // Margine per la barra del titolo e i bordi della finestra.
+    let (fw, fh) = (w.min(area.width - 24.0), h.min(area.height - 48.0));
+    if fw < w || fh < h {
+        let _ = win.set_size(tauri::LogicalSize::new(fw, fh));
+        let _ = win.center();
+    }
+}
+
+/// Server modificabile della personalizzazione: al primo avvio diventa quello
+/// scelto da chi usa il client, che poi può cambiarlo.
+fn seed_server() {
+    let Some(s) = BRAND.get().and_then(brand::initial_server) else { return };
+    if rd::user_server().0.trim().is_empty() {
+        rd::set_user_server(&s.host, &s.key, &s.relay, &s.api, &s.kind);
+    }
+}
+
 fn main() {
     #[cfg(target_os = "linux")]
     linux_install::prepare_extracted_env();
@@ -360,6 +390,7 @@ fn main() {
     let cm = args.first().is_some_and(|a| a == "--cm");
     if !cm {
         updater::cleanup();
+        seed_server();
     }
     rd::start_status_sync();
 
@@ -386,16 +417,17 @@ fn main() {
             rd_info, rd_brand, rd_connect, rd_cancel_assistance, rd_update_check, rd_update_install, rd_request_assistance, rd_server_config, rd_set_server_config, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
         ])
         .setup(move |app| {
-            // Pulsanti sotto le credenziali (finestra più alta, mai scorrimento): «Controlla un PC»
-            // sempre (44 px + spaziatura), «Chiedi assistenza» sopra se c'è (44 + 8).
-            let extra = if cm { 0.0 } else { 64.0 + if assistance_enabled() || !current_server().5 { 52.0 } else { 0.0 } };
-            let (label, url, w, h) = if cm { ("cm", "index.html#cm", 400.0, 600.0) } else { ("main", "index.html", 420.0, 680.0 + extra) };
+            // Principale: sidebar e contenuto (che scorre se serve). Minimi piccoli
+            // perché entri anche negli schermi bassi (1366×768, 1024×600).
+            let (label, url, w, h, min_w, min_h) = if cm { ("cm", "index.html#cm", 400.0, 600.0, 360.0, 440.0) } else { ("main", "index.html", 780.0, 560.0, 560.0, 420.0) };
             let win = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
                 .title(BRAND.get().and_then(|b| b["name"].as_str()).filter(|n| !n.is_empty()).unwrap_or("Merlin-RustDesk"))
                 .inner_size(w, h)
-                .min_inner_size(400.0, if cm { 560.0 } else { 640.0 + extra })
+                .min_inner_size(min_w, min_h)
+                .center()
                 .visible(!tray_start)
                 .build()?;
+            fit_to_screen(&win, w, h);
             if !cm {
                 make_tray(app)?;
             }
