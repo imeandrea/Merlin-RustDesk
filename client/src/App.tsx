@@ -312,21 +312,47 @@ function AskHelp({ disabled }: { disabled: boolean }) {
     const t = setTimeout(() => setSentAt(null), Math.max(0, sentAt + ASK_MS - Date.now()))
     return () => clearTimeout(t)
   }, [sentAt])
+  // Tempo trascorso dall'invio, aggiornato ogni secondo.
+  const [now, setNow] = React.useState(Date.now())
+  React.useEffect(() => {
+    if (!sentAt) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [sentAt])
   const ask = async () => {
     setBusy(true)
     try {
       await invoke("rd_request_assistance")
       setSentAt(Date.now())
-      toast.success("Richiesta inviata", { description: "Il tecnico è stato avvisato: tieni aperto questo programma." })
+      setNow(Date.now())
     } catch (e) {
       toast.error("Richiesta non inviata", { description: String(e) })
     } finally {
       setBusy(false)
     }
   }
+  const cancel = async () => {
+    setBusy(true)
+    try {
+      await invoke("rd_cancel_assistance")
+      setSentAt(null)
+    } catch (e) {
+      toast.error("Richiesta non annullata", { description: String(e) })
+    } finally {
+      setBusy(false)
+    }
+  }
+  const elapsed = sentAt ? Math.max(0, Math.floor((now - sentAt) / 1000)) : 0
+  // Inviata: anello che pulsa, tempo trascorso (scade come sul server) e Annulla.
   return sentAt ? (
-    <div className="flex items-center justify-center gap-2 rounded-xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-sm text-emerald-700 dark:text-emerald-300">
-      <CheckIcon className="size-4" /> Richiesta inviata: il tecnico è stato avvisato
+    <div className="flex h-11 items-center gap-3 rounded-xl border border-emerald-500/40 bg-emerald-500/10 pr-1.5 pl-4 text-sm text-emerald-700 dark:text-emerald-300" role="status">
+      <span className="relative flex size-3 shrink-0">
+        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-500 opacity-60" />
+        <span className="relative inline-flex size-3 rounded-full bg-emerald-500" />
+      </span>
+      <span className="min-w-0 flex-1 truncate">In attesa del tecnico… <span className="tabular-nums opacity-80">{Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, "0")}</span></span>
+      <Button size="sm" variant="ghost" className="h-8 text-emerald-700 hover:bg-emerald-500/15 hover:text-emerald-800 dark:text-emerald-300 dark:hover:text-emerald-200"
+        disabled={busy} onClick={() => void cancel()}>{busy ? <Spinner /> : <XIcon />} Annulla</Button>
     </div>
   ) : (
     <Button size="lg" variant="outline" className="border-primary/50 text-primary hover:bg-primary/10 hover:text-primary h-11"

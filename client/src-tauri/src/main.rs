@@ -155,6 +155,11 @@ async fn rd_request_assistance() -> Result<(), String> {
     rd::request_assistance().await
 }
 
+#[tauri::command]
+async fn rd_cancel_assistance() -> Result<(), String> {
+    rd::cancel_assistance().await
+}
+
 /// Nome usato per configurazione e IPC: separato da RustDesk e da Merlin.
 const APP_NAME: &str = "MerlinRustDesk";
 
@@ -353,7 +358,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            rd_info, rd_brand, rd_connect, rd_request_assistance, rd_server_config, rd_set_server_config, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
+            rd_info, rd_brand, rd_connect, rd_cancel_assistance, rd_request_assistance, rd_server_config, rd_set_server_config, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
         ])
         .setup(move |app| {
             // Pulsanti sotto le credenziali (finestra più alta, mai scorrimento): «Controlla un PC»

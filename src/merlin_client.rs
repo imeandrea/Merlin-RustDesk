@@ -191,14 +191,27 @@ pub fn uninstall_service() -> Result<(), String> {
     crate::platform::uninstall_me(true).map_err(|e| e.to_string())
 }
 
+fn assistance_url(api: &str, action: &str) -> String {
+    format!("{}/api/assistance/{action}", api.trim_end_matches('/'))
+}
+
 /// «Chiedi assistenza» (Merlin RustDesk Server API): the server marks this ID
 /// as asking for help for a few minutes and tells the technicians.
 pub async fn request_assistance() -> Result<(), String> {
+    assistance_call("request").await
+}
+
+/// Cancels this ID's request (the technicians see it go away).
+pub async fn cancel_assistance() -> Result<(), String> {
+    assistance_call("cancel").await
+}
+
+async fn assistance_call(action: &str) -> Result<(), String> {
     let api = crate::common::get_api_server(Config::get_option("api-server"), Config::get_option("custom-rendezvous-server"));
     if api.is_empty() {
         return Err("Server API non configurato".into());
     }
-    let url = format!("{api}/api/assistance/request");
+    let url = assistance_url(&api, action);
     let body = json!({ "id": Config::get_id() }).to_string();
     let (status, text) = crate::common::post_request_with_status(url, body, "").await.map_err(|e| e.to_string())?;
     if (200..300).contains(&status) {
@@ -286,6 +299,17 @@ fn open_switch_viewer(peer_id: &str, uuid: &str) {
 
 pub fn cm_switch_back(id: i32) {
     crate::ui_cm_interface::switch_back(id)
+}
+
+#[cfg(test)]
+mod assistance_tests {
+    use super::*;
+
+    #[test]
+    fn request_and_cancel_urls() {
+        assert_eq!(assistance_url("https://api.example", "request"), "https://api.example/api/assistance/request");
+        assert_eq!(assistance_url("https://api.example/", "cancel"), "https://api.example/api/assistance/cancel");
+    }
 }
 
 #[cfg(test)]
