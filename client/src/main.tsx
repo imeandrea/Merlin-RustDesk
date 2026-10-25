@@ -10,5 +10,10 @@ import { loadBrand } from "./lib/brand"
 import "./index.css"
 
 applyTheme()
+// Niente menu del tasto destro della webview (Ricarica, Ispeziona elemento): i
+// menu sono quelli dell'app. Restano nei campi di testo (copia e incolla).
+document.addEventListener("contextmenu", e => {
+  if (!(e.target as HTMLElement | null)?.closest("input, textarea, [contenteditable=true]")) e.preventDefault()
+})
 // `#viewer`: finestra di visione dell'inversione di ruolo (processo a sé).
 void loadBrand().finally(() => createRoot(document.getElementById("root")!).render(window.location.hash === "#viewer" ? <Viewer /> : <App />))

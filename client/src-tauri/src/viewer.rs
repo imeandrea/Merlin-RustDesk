@@ -94,6 +94,9 @@ fn viewer_files(input: Value) {
         "download" => f.download(n("job"), s("path"), s("to")),
         "upload" => f.upload(n("job"), s("path"), s("to"), input.get("windows").and_then(|v| v.as_bool()).unwrap_or(false)),
         "cancel" => f.cancel(n("job")),
+        "mkdir" => f.mkdir(n("job"), s("path")),
+        "rename" => f.rename(n("job"), s("path"), s("name")),
+        "remove" => f.remove(n("job"), s("path"), input.get("dir").and_then(|v| v.as_bool()).unwrap_or(false)),
         "login" => {
             *PASSWORD.lock().unwrap() = s("password").to_owned();
             f.login(s("password"))

@@ -453,6 +453,20 @@ impl FilesHandle {
     pub fn cancel(&self, job: i32) {
         self.session.cancel_job(job);
     }
+    pub fn mkdir(&self, job: i32, path: &str) {
+        self.session.create_dir(job, path.to_owned(), true);
+    }
+    /// `path` gets the new name `name` (same folder).
+    pub fn rename(&self, job: i32, path: &str, name: &str) {
+        self.session.rename_file(job, path.to_owned(), name.to_owned(), true);
+    }
+    pub fn remove(&self, job: i32, path: &str, dir: bool) {
+        if dir {
+            self.session.remove_dir(job, path.to_owned(), true);
+        } else {
+            self.session.remove_file(job, path.to_owned(), 0, true);
+        }
+    }
     pub fn login(&self, password: &str) {
         self.session.login(String::new(), String::new(), password.to_owned(), false);
     }

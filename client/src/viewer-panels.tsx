@@ -7,10 +7,17 @@ import { Channel, invoke } from "@tauri-apps/api/core"
 import { getCurrentWebview } from "@tauri-apps/api/webview"
 import { open } from "@tauri-apps/plugin-dialog"
 import {
-  ArrowUpIcon, DownloadIcon, FileIcon, FolderIcon, KeyRoundIcon, RefreshCwIcon, SendIcon, UploadIcon, XIcon,
+  ArrowUpIcon, ClipboardIcon, DownloadIcon, FileIcon, FolderDownIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, KeyRoundIcon,
+  PencilIcon, RefreshCwIcon, SendIcon, Trash2Icon, UploadIcon, XIcon,
 } from "lucide-react"
 
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "@/components/ui/context-menu"
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
@@ -97,6 +104,12 @@ export function FilesPanel({ windows, onClose }: { windows: boolean; onClose: ()
   const [dropping, setDropping] = React.useState(false)
   const [downloads, setDownloads] = React.useState("")
   const pathRef = React.useRef(""); pathRef.current = path
+  /** Operazioni in corso (nuova cartella, rinomina, elimina): job → descrizione per l'errore. */
+  const ops = React.useRef(new Map<number, string>())
+  const [opError, setOpError] = React.useState("")
+  /** Dialog aperto: nome per nuova cartella o rinomina, conferma per elimina. */
+  const [ask, setAsk] = React.useState<{ kind: "mkdir" | "rename" | "delete"; entry?: Entry } | null>(null)
+  const [name, setName] = React.useState("")
 
   const patch = (job: number, p: Partial<Transfer>) => setTransfers(ts => ts.map(t => (t.job === job ? { ...t, ...p } : t)))
 
@@ -114,11 +127,17 @@ export function FilesPanel({ windows, onClose }: { windows: boolean; onClose: ()
         case "fs_job": patch(Number(e.job), { total: Number(e.total ?? 0) }); break
         case "fs_progress": patch(Number(e.job), { done: Number(e.done ?? 0) }); break
         case "fs_done":
+          ops.current.delete(Number(e.job))
           setTransfers(ts => ts.map(t => (t.job === Number(e.job) ? { ...t, state: "ok", done: t.total } : t)))
-          // Caricato qui: la cartella remota si aggiorna.
+          // Caricato, creato, rinominato o eliminato qui: la cartella remota si aggiorna.
           files({ t: "list", path: pathRef.current })
           break
-        case "fs_error": patch(Number(e.job), { state: "error", error: String(e.err ?? "") }); break
+        case "fs_error": {
+          const op = ops.current.get(Number(e.job))
+          if (op) { ops.current.delete(Number(e.job)); setOpError(`${op}: ${String(e.err ?? "errore")}`); files({ t: "list", path: pathRef.current }) }
+          else patch(Number(e.job), { state: "error", error: String(e.err ?? "") })
+          break
+        }
         case "fs_ended": setState("ended"); break
       }
     }
@@ -144,12 +163,31 @@ export function FilesPanel({ windows, onClose }: { windows: boolean; onClose: ()
     return () => { void un.then(f => f()) }
   }, [state, upload])
 
-  const go = (p: string) => { setLoading(true); files({ t: "list", path: p }) }
-  const download = (en: Entry) => {
-    if (!downloads) return
+  const go = (p: string) => { setLoading(true); setOpError(""); files({ t: "list", path: p }) }
+  const download = (en: Entry, to = downloads) => {
+    if (!to) return
     const job = nextJob++
     setTransfers(ts => [{ job, name: en.name, download: true, total: en.dir ? 0 : en.size, done: 0, state: "run" }, ...ts])
-    files({ t: "download", job, path: joinRemote(path, en.name, windows), to: downloads })
+    files({ t: "download", job, path: joinRemote(path, en.name, windows), to })
+  }
+  const downloadTo = async (en: Entry) => {
+    const dir = await open({ directory: true, multiple: false, title: `Dove scaricare «${en.name}»`, defaultPath: downloads || undefined }).catch(() => null)
+    if (typeof dir === "string") download(en, dir)
+  }
+  const op = (label: string, cmd: Record<string, unknown>) => {
+    const job = nextJob++
+    ops.current.set(job, label)
+    setOpError("")
+    files({ ...cmd, job })
+  }
+  const copyPath = (p: string) => { void navigator.clipboard.writeText(p).catch(() => {}) }
+  const confirmAsk = () => {
+    if (!ask) return
+    const v = name.trim()
+    if (ask.kind === "mkdir" && v) op(`Nuova cartella «${v}»`, { t: "mkdir", path: joinRemote(path, v, windows) })
+    if (ask.kind === "rename" && ask.entry && v && v !== ask.entry.name) op(`Rinomina «${ask.entry.name}»`, { t: "rename", path: joinRemote(path, ask.entry.name, windows), name: v })
+    if (ask.kind === "delete" && ask.entry) op(`Elimina «${ask.entry.name}»`, { t: "remove", path: joinRemote(path, ask.entry.name, windows), dir: ask.entry.dir })
+    setAsk(null)
   }
   const pick = async () => {
     const chosen = await open({ multiple: true, directory: false, title: "File da caricare sul PC remoto" }).catch(() => null)
@@ -185,22 +223,50 @@ export function FilesPanel({ windows, onClose }: { windows: boolean; onClose: ()
         )}
         {state === "ended" && <p className="text-muted-foreground p-4 text-center text-sm">Connessione dei file chiusa.</p>}
         {state === "ready" && (
-          <ScrollArea className="h-full">
-            <div className="flex flex-col py-1">
-              {entries.length === 0 && <p className="text-muted-foreground px-3 py-2 text-xs">Cartella vuota.</p>}
-              {entries.map(en => (
-                <div key={en.name} className="group hover:bg-muted/60 flex h-8 items-center gap-2 px-3 text-sm"
-                  onDoubleClick={() => en.dir && go(joinRemote(path, en.name, windows))}>
-                  {en.dir ? <FolderIcon className="size-4 shrink-0 text-sky-500" /> : <FileIcon className="text-muted-foreground size-4 shrink-0" />}
-                  <button type="button" className={cn("min-w-0 flex-1 truncate text-left", en.dir && "cursor-pointer")} title={en.name}
-                    onClick={() => en.dir && go(joinRemote(path, en.name, windows))}>{en.name}</button>
-                  {!en.dir && <span className="text-muted-foreground shrink-0 text-xs tabular-nums">{sizeText(en.size)}</span>}
-                  <Button size="icon" variant="ghost" className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label={`Scarica ${en.name}`} title="Scarica nella cartella Download"
-                    onClick={() => download(en)}><DownloadIcon /></Button>
+          <ContextMenu>
+            <ContextMenuTrigger asChild>
+              <ScrollArea className="h-full">
+                <div className="flex min-h-full flex-col py-1">
+                  {entries.length === 0 && <p className="text-muted-foreground px-3 py-2 text-xs">Cartella vuota.</p>}
+                  {entries.map(en => {
+                    const full = joinRemote(path, en.name, windows)
+                    return (
+                      <ContextMenu key={en.name}>
+                        <ContextMenuTrigger asChild>
+                          <div className="group hover:bg-muted/60 data-[state=open]:bg-muted flex h-8 items-center gap-2 px-3 text-sm"
+                            onDoubleClick={() => en.dir && go(full)}>
+                            {en.dir ? <FolderIcon className="size-4 shrink-0 text-sky-500" /> : <FileIcon className="text-muted-foreground size-4 shrink-0" />}
+                            <button type="button" className={cn("min-w-0 flex-1 truncate text-left", en.dir && "cursor-pointer")} title={en.name}
+                              onClick={() => en.dir && go(full)}>{en.name}</button>
+                            {!en.dir && <span className="text-muted-foreground shrink-0 text-xs tabular-nums">{sizeText(en.size)}</span>}
+                            <Button size="icon" variant="ghost" className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100" aria-label={`Scarica ${en.name}`} title="Scarica nella cartella Download"
+                              onClick={() => download(en)}><DownloadIcon /></Button>
+                          </div>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          {en.dir && <ContextMenuItem onSelect={() => go(full)}><FolderOpenIcon /> Apri</ContextMenuItem>}
+                          <ContextMenuItem disabled={!downloads} onSelect={() => download(en)}><DownloadIcon /> Scarica nella cartella Download</ContextMenuItem>
+                          <ContextMenuItem onSelect={() => void downloadTo(en)}><FolderDownIcon /> Scarica in…</ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem onSelect={() => { setName(en.name); setAsk({ kind: "rename", entry: en }) }}><PencilIcon /> Rinomina…</ContextMenuItem>
+                          <ContextMenuItem variant="destructive" onSelect={() => setAsk({ kind: "delete", entry: en })}><Trash2Icon /> Elimina…</ContextMenuItem>
+                          <ContextMenuSeparator />
+                          <ContextMenuItem onSelect={() => copyPath(full)}><ClipboardIcon /> Copia percorso</ContextMenuItem>
+                        </ContextMenuContent>
+                      </ContextMenu>
+                    )
+                  })}
                 </div>
-              ))}
-            </div>
-          </ScrollArea>
+              </ScrollArea>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem onSelect={() => { setName(""); setAsk({ kind: "mkdir" }) }}><FolderPlusIcon /> Nuova cartella…</ContextMenuItem>
+              <ContextMenuItem onSelect={() => void pick()}><UploadIcon /> Carica file…</ContextMenuItem>
+              <ContextMenuItem onSelect={() => go(path)}><RefreshCwIcon /> Aggiorna</ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem onSelect={() => copyPath(path)}><ClipboardIcon /> Copia percorso della cartella</ContextMenuItem>
+            </ContextMenuContent>
+          </ContextMenu>
         )}
         {dropping && state === "ready" && (
           <div className="border-primary bg-primary/10 text-primary pointer-events-none absolute inset-2 flex items-center justify-center rounded-lg border-2 border-dashed text-sm font-medium">
@@ -208,6 +274,39 @@ export function FilesPanel({ windows, onClose }: { windows: boolean; onClose: ()
           </div>
         )}
       </div>
+      {opError && (
+        <div className="text-destructive flex shrink-0 items-center gap-2 border-t px-3 py-1.5 text-xs" role="alert">
+          <span className="min-w-0 flex-1 truncate" title={opError}>{opError}</span>
+          <Button size="icon" variant="ghost" className="size-5" aria-label="Chiudi" onClick={() => setOpError("")}><XIcon /></Button>
+        </div>
+      )}
+      <Dialog open={ask?.kind === "mkdir" || ask?.kind === "rename"} onOpenChange={o => { if (!o) setAsk(null) }}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader><DialogTitle>{ask?.kind === "mkdir" ? "Nuova cartella" : `Rinomina «${ask?.entry?.name ?? ""}»`}</DialogTitle></DialogHeader>
+          <form className="flex flex-col gap-4" onSubmit={e => { e.preventDefault(); confirmAsk() }}>
+            <Input autoFocus value={name} onChange={e => setName(e.target.value)} placeholder="Nome"
+              onFocus={e => { const dot = e.currentTarget.value.lastIndexOf("."); e.currentTarget.setSelectionRange(0, dot > 0 && ask?.entry && !ask.entry.dir ? dot : e.currentTarget.value.length) }} />
+            <DialogFooter className="gap-2">
+              <Button type="button" variant="outline" onClick={() => setAsk(null)}>Annulla</Button>
+              <Button type="submit" disabled={!name.trim()}>{ask?.kind === "mkdir" ? "Crea" : "Rinomina"}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+      <AlertDialog open={ask?.kind === "delete"} onOpenChange={o => { if (!o) setAsk(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminare «{ask?.entry?.name}»?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {ask?.entry?.dir ? "La cartella e tutto il suo contenuto vengono eliminati" : "Il file viene eliminato"} dal PC remoto, senza passare dal cestino.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annulla</AlertDialogCancel>
+            <AlertDialogAction className="bg-destructive text-white hover:bg-destructive/90" onClick={confirmAsk}><Trash2Icon /> Elimina</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {transfers.length > 0 && (
         <div className="flex max-h-40 shrink-0 flex-col gap-1.5 overflow-y-auto border-t p-2">
           {transfers.map(t => (
