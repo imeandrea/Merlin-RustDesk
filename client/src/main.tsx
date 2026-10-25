@@ -15,5 +15,7 @@ applyTheme()
 document.addEventListener("contextmenu", e => {
   if (!(e.target as HTMLElement | null)?.closest("input, textarea, [contenteditable=true]")) e.preventDefault()
 })
+const viewer = window.location.hash === "#viewer"
+if (!viewer) document.documentElement.classList.add("fit")
 // `#viewer`: finestra di visione dell'inversione di ruolo (processo a sé).
-void loadBrand().finally(() => createRoot(document.getElementById("root")!).render(window.location.hash === "#viewer" ? <Viewer /> : <App />))
+void loadBrand().finally(() => createRoot(document.getElementById("root")!).render(viewer ? <Viewer /> : <App />))

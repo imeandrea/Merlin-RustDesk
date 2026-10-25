@@ -10,7 +10,7 @@ import { Toaster, toast } from "sonner"
 import {
   AppWindowIcon, ArrowBigUpDashIcon, CheckIcon, ClipboardIcon, CopyIcon, EyeIcon, EyeOffIcon, FolderIcon, GlobeIcon, HandHelpingIcon, HeadsetIcon,
   KeyRoundIcon, type LucideIcon, MessageSquareIcon, MonitorIcon, MousePointer2Icon, PowerIcon,
-  RefreshCwIcon, SendIcon, ServerIcon, PhoneIcon, MailIcon, MessageCircleIcon, ClockIcon, InfoIcon, SettingsIcon, LaptopIcon, SunIcon, MoonIcon, ShieldCheckIcon, SparklesIcon, WifiOffIcon, XIcon,
+  RefreshCwIcon, SendIcon, ServerIcon, PhoneIcon, MailIcon, MessageCircleIcon, ClockIcon, InfoIcon, LaptopIcon, SunIcon, MoonIcon, ShieldCheckIcon, SparklesIcon, WifiOffIcon, XIcon,
 } from "lucide-react"
 
 import logo from "@/assets/logo.png"
@@ -20,7 +20,6 @@ import { cn } from "@/lib/utils"
 import { playChime } from "@/lib/chime"
 import { getTheme, setTheme, type ThemeChoice } from "@/lib/theme"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Field, FieldContent, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -72,12 +71,29 @@ export default function App() {
 type InstallState = "unsupported" | "portable" | "installed"
 interface Info { id: string; status: number; password: string; permanentSet: boolean; version: string; install: InstallState }
 
+type Page = "help" | "connect" | "unattended" | "server"
+interface NavItem { id: Page; label: string; icon: LucideIcon }
+
+/** Finestra stretta: la sidebar mostra solo le icone. */
+function useNarrow() {
+  const query = "(max-width: 719px)"
+  const [narrow, setNarrow] = React.useState(() => window.matchMedia(query).matches)
+  React.useEffect(() => {
+    const m = window.matchMedia(query)
+    const on = () => setNarrow(m.matches)
+    m.addEventListener("change", on)
+    return () => m.removeEventListener("change", on)
+  }, [])
+  return narrow
+}
+
 function MainWindow() {
   const conn = useConnections()
   const active = conn.client
+  const narrow = useNarrow()
   const [info, setInfo] = React.useState<Info | null>(null)
-  const [settingsOpen, setSettingsOpen] = React.useState(false)
   const [aboutOpen, setAboutOpen] = React.useState(false)
+  const [page, setPage] = React.useState<Page>("help")
   const refresh = React.useCallback(() => { void invoke<Info>("rd_info").then(setInfo).catch(() => {}) }, [])
   React.useEffect(() => {
     refresh()
@@ -99,94 +115,167 @@ function MainWindow() {
   const offline = (info?.status ?? 0) < 0
   // Server: bloccato (personalizzazione o versione privata) o scelto da chi usa il client.
   const [server, setServer] = React.useState<ServerConfig | null>(null)
-  const [serverOpen, setServerOpen] = React.useState(false)
-  const [connectOpen, setConnectOpen] = React.useState(false)
   const loadServer = React.useCallback(() => { void invoke<ServerConfig>("rd_server_config").then(setServer).catch(() => {}) }, [])
   React.useEffect(loadServer, [loadServer])
   const needsSetup = server !== null && !server.locked && !server.configured
+  // Richiesta o sessione: si torna sempre alla pagina dell'assistenza.
+  React.useEffect(() => { if (active) setPage("help") }, [active])
+
+  const nav: NavItem[] = [
+    { id: "help", label: "Assistenza", icon: HeadsetIcon },
+    ...(brand.outgoing && !needsSetup ? [{ id: "connect" as const, label: "Controlla un PC", icon: MonitorIcon }] : []),
+    { id: "unattended", label: "Accesso non presidiato", icon: ShieldCheckIcon },
+    ...(server && !server.locked && server.configured ? [{ id: "server" as const, label: "Server", icon: ServerIcon }] : []),
+  ]
+  const current = nav.some(n => n.id === page) ? page : "help"
 
   return (
-    <div className="bg-background text-foreground relative flex h-svh flex-col">
-      <Header status={info?.status ?? 0} />
-      {/* Mai scorrimento: tutto entra nella finestra (altezza minima della finestra). */}
-      <main className="min-h-0 flex-1 overflow-hidden">
-        <div className="flex h-full flex-col justify-start gap-5 px-5 pt-2 pb-4">
-          {needsSetup ? (
-            <div className="flex flex-col gap-4">
-              <Hero tiles={[["sky", ServerIcon], ["primary", KeyRoundIcon], ["emerald", GlobeIcon]]}
-                title="Configura il server" text="Questo client non ha un server predefinito: inserisci i dati che ti ha dato il tuo tecnico." />
-              <ServerForm config={server} onSaved={() => { loadServer(); setTimeout(refresh, 500) }} />
-            </div>
-          ) : active?.authorized ? (
-            <Session client={active} since={conn.since[active.id] ?? Date.now()} chat={conn.chat[active.id] ?? []} compact
-              onSend={text => conn.actions.send(active, text)} onEnd={() => conn.actions.close(active)} />
-          ) : offline ? (
-            <Hero tiles={[["rose", WifiOffIcon], ["amber", RefreshCwIcon], ["sky", GlobeIcon]]}
-              title="Nessuna connessione" text="Il computer non raggiunge il server di assistenza. Controlla Internet: si ricollega da solo." />
-          ) : (
-            <>
-              <Hero tiles={[["sky", MonitorIcon], ["primary", HeadsetIcon], ["emerald", ShieldCheckIcon]]}
-                title={online ? "Pronto per l'assistenza" : "Collegamento al server…"} />
-              <Credentials id={info?.id ?? ""} password={info?.password ?? ""}
-                onNewPassword={() => { void invoke("rd_new_password").then(() => { setTimeout(refresh, 300); toast("Nuova password generata") }) }} />
-              <div className="flex flex-col gap-2">
+    <div className="bg-background text-foreground flex h-svh">
+      <Sidebar status={info?.status ?? 0} nav={nav} page={current} onPage={setPage} narrow={narrow}
+        version={info?.version ?? ""} onAbout={() => setAboutOpen(true)} />
+      <div className="relative flex min-w-0 flex-1 flex-col">
+        <UpdateBar />
+        <main className="min-h-0 flex-1 overflow-y-auto">
+          {/* Il cambio di pagina scorre appena dal basso: mostra cosa è cambiato. */}
+          <div key={current} className="animate-in fade-in slide-in-from-bottom-2 mx-auto flex min-h-full w-full max-w-md flex-col gap-5 px-5 py-5 duration-300 motion-reduce:animate-none">
+            {current === "help" && (needsSetup ? (
+              <>
+                <Hero tiles={[["sky", ServerIcon], ["primary", KeyRoundIcon], ["emerald", GlobeIcon]]}
+                  title="Configura il server" text="Questo client non ha un server predefinito: inserisci i dati che ti ha dato il tuo tecnico." />
+                <ServerForm config={server} onSaved={() => { loadServer(); setTimeout(refresh, 500) }} />
+              </>
+            ) : active?.authorized ? (
+              <Session client={active} since={conn.since[active.id] ?? Date.now()} chat={conn.chat[active.id] ?? []} compact
+                onSend={text => conn.actions.send(active, text)} onEnd={() => conn.actions.close(active)} />
+            ) : (
+              <>
+                {offline ? (
+                  <Hero tiles={[["rose", WifiOffIcon], ["amber", RefreshCwIcon], ["sky", GlobeIcon]]}
+                    title="Nessuna connessione" text="Il computer non raggiunge il server di assistenza. Controlla Internet: si ricollega da solo." />
+                ) : (
+                  <Hero tiles={[["sky", MonitorIcon], ["primary", HeadsetIcon], ["emerald", ShieldCheckIcon]]}
+                    title={online ? "Pronto per l'assistenza" : "Collegamento al server…"} />
+                )}
+                <Credentials id={info?.id ?? ""} password={info?.password ?? ""}
+                  onNewPassword={() => { void invoke("rd_new_password").then(() => { setTimeout(refresh, 300); toast("Nuova password generata") }) }} />
                 {server?.assistance && <AskHelp disabled={!online} />}
-                <Button size="lg" variant="outline" className="h-11" disabled={!online} onClick={() => setConnectOpen(true)}>
-                  <MonitorIcon /> Controlla un PC
-                </Button>
-              </div>
-            </>
-          )}
-          {!needsSetup && !active?.authorized && (brand.contacts.length === 0 ? <Guide /> : <Contacts />)}
-        </div>
-      </main>
-      {!active?.authorized && <UpdateBar />}
-      {/* Richiesta di collegamento: pannello dal basso, non modale (ID e password restano visibili). */}
-      {active && !active.authorized && (
-        <RequestPanel client={active} onAccept={() => conn.actions.accept(active)} onReject={() => conn.actions.close(active)} />
-      )}
-      <footer className="flex h-10 shrink-0 items-center gap-2 border-t px-2">
-        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setSettingsOpen(true)}><SettingsIcon /> Accesso non presidiato</Button>
-        {server && !server.locked && server.configured && (
-          <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setServerOpen(true)}><ServerIcon /> Server</Button>
+                {brand.contacts.length === 0 ? <Guide /> : <Contacts />}
+              </>
+            ))}
+            {current === "connect" && <ConnectPage online={online} />}
+            {current === "unattended" && (
+              <UnattendedPage permanentSet={!!info?.permanentSet} onSaved={refresh}
+                install={info?.install ?? "unsupported"} installing={installing}
+                onInstall={() => {
+                  setInstalling(true)
+                  void invoke("rd_install").catch(e => { setInstalling(false); toast.error(`Installazione non avviata: ${e}`) })
+                }}
+                onUninstall={() => { void invoke("rd_uninstall").catch(e => toast.error(`Disinstallazione non riuscita: ${e}`)) }} />
+            )}
+            {current === "server" && server && (
+              <>
+                <Hero tiles={[["sky", ServerIcon], ["primary", KeyRoundIcon], ["emerald", GlobeIcon]]}
+                  title="Server" text="Il server di assistenza usato da questo client." />
+                <ServerForm config={server} onSaved={() => { loadServer(); setTimeout(refresh, 500) }} />
+              </>
+            )}
+          </div>
+        </main>
+        {/* Richiesta di collegamento: pannello dal basso, non modale (ID e password restano visibili). */}
+        {active && !active.authorized && (
+          <RequestPanel client={active} onAccept={() => conn.actions.accept(active)} onReject={() => conn.actions.close(active)} />
         )}
-        <ThemeSwitch className="ml-auto" />
+      </div>
+      <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} version={info?.version ?? ""} />
+    </div>
+  )
+}
+
+const NAV_STEP_REM = 2.5 // altezza di una voce (h-9) più lo spazio tra le voci (gap-1)
+
+/** Sidebar: logo, nome e stato in alto; le pagine; tema e versione in fondo.
+ *  Stretta (finestra piccola) mostra solo le icone, con il nome nel suggerimento. */
+function Sidebar({ status, nav, page, onPage, narrow, version, onAbout }: {
+  status: number; nav: NavItem[]; page: Page; onPage: (p: Page) => void; narrow: boolean; version: string; onAbout: () => void
+}) {
+  const s = statusLook(status)
+  const index = Math.max(0, nav.findIndex(n => n.id === page))
+  return (
+    <aside className={cn("bg-sidebar text-sidebar-foreground border-sidebar-border flex shrink-0 flex-col border-r transition-[width] duration-300 motion-reduce:transition-none",
+      narrow ? "w-14" : "w-56")}>
+      <div data-tauri-drag-region className={cn("flex h-16 shrink-0 items-center gap-2.5", narrow ? "justify-center" : "px-4")}>
+        <span className="relative shrink-0">
+          <img src={brand.logo ?? logo} alt="" className="size-8 object-contain" draggable={false} />
+          {narrow && <StatusDot look={s} className="ring-sidebar absolute -right-0.5 -bottom-0.5 ring-2" />}
+        </span>
+        {!narrow && (
+          <div className="min-w-0 flex-1">
+            <div className="truncate font-[JetBrains_Mono,ui-monospace,monospace] text-sm font-bold tracking-tight">{brand.name}</div>
+            <div className={cn("flex items-center gap-1.5 text-xs", s.cls)}><StatusDot look={s} /> {s.text}</div>
+          </div>
+        )}
+      </div>
+      <nav className="relative flex flex-col gap-1 px-2 pt-1">
+        {/* Evidenziatore della voce attiva: scorre fino alla voce scelta. */}
+        <span aria-hidden className="bg-sidebar-accent absolute inset-x-2 top-1 h-9 rounded-lg transition-transform duration-300 ease-out motion-reduce:transition-none"
+          style={{ transform: `translateY(${index * NAV_STEP_REM}rem)` }}>
+          <span className="bg-primary absolute top-2 bottom-2 left-0 w-0.5 rounded-full" />
+        </span>
+        {nav.map(n => {
+          const on = n.id === page
+          const item = (
+            <button key={n.id} type="button" aria-current={on ? "page" : undefined} onClick={() => onPage(n.id)}
+              className={cn("focus-visible:ring-sidebar-ring relative z-10 flex h-9 items-center gap-2.5 rounded-lg text-sm outline-none focus-visible:ring-2",
+                narrow ? "justify-center" : "px-3",
+                on ? "text-sidebar-accent-foreground font-medium" : "text-muted-foreground hover:text-sidebar-foreground")}>
+              <n.icon className={cn("size-4 shrink-0", on && "text-primary")} />
+              {!narrow && <span className="truncate">{n.label}</span>}
+            </button>
+          )
+          return narrow ? (
+            <Tooltip key={n.id}>
+              <TooltipTrigger asChild>{item}</TooltipTrigger>
+              <TooltipContent side="right">{n.label}</TooltipContent>
+            </Tooltip>
+          ) : item
+        })}
+      </nav>
+      <div className={cn("mt-auto flex shrink-0 items-center gap-1 p-2", narrow && "flex-col")}>
+        {narrow ? <ThemeCycle /> : <ThemeSwitch />}
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="sm" className="text-muted-foreground h-7 gap-1 px-1.5 text-[11px] font-normal tabular-nums" onClick={() => setAboutOpen(true)}>
-              <InfoIcon className="size-3.5" /> {info?.version ? `v${info.version}` : ""}
+            <Button variant="ghost" size="sm" aria-label="Informazioni e licenze" onClick={onAbout}
+              className={cn("text-muted-foreground h-7 gap-1 px-1.5 text-[0.6875rem] font-normal tabular-nums", !narrow && "ml-auto")}>
+              <InfoIcon className="size-3.5" />{!narrow && version ? ` v${version}` : ""}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Informazioni e licenze</TooltipContent>
+          <TooltipContent side={narrow ? "right" : "top"}>{narrow && version ? `v${version} · ` : ""}Informazioni e licenze</TooltipContent>
         </Tooltip>
-      </footer>
-      <Dialog open={serverOpen} onOpenChange={setServerOpen}>
-        <DialogContent className="gap-5 sm:max-w-sm">
-          <DialogHeader className="items-center gap-3 text-center">
-            <Tiles tiles={[["sky", ServerIcon], ["primary", KeyRoundIcon], ["emerald", GlobeIcon]]} />
-            <DialogTitle>Server</DialogTitle>
-            <DialogDescription>Il server di assistenza usato da questo client.</DialogDescription>
-          </DialogHeader>
-          {server && <ServerForm config={server} onSaved={() => { setServerOpen(false); loadServer(); setTimeout(refresh, 500) }} />}
-        </DialogContent>
-      </Dialog>
-      <ConnectDialog open={connectOpen} onOpenChange={setConnectOpen} />
-      <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} version={info?.version ?? ""} />
-      <UnattendedDialog open={settingsOpen} onOpenChange={setSettingsOpen} permanentSet={!!info?.permanentSet} onSaved={refresh}
-        install={info?.install ?? "unsupported"} installing={installing}
-        onInstall={() => {
-          setInstalling(true)
-          void invoke("rd_install").catch(e => { setInstalling(false); toast.error(`Installazione non avviata: ${e}`) })
-        }}
-        onUninstall={() => { void invoke("rd_uninstall").catch(e => toast.error(`Disinstallazione non riuscita: ${e}`)) }} />
-    </div>
+      </div>
+    </aside>
+  )
+}
+
+type StatusLook = { text: string; cls: string; dot: string; ping: boolean }
+function statusLook(status: number): StatusLook {
+  return status > 0 ? { text: "Online", cls: "text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500", ping: true }
+    : status < 0 ? { text: "Offline", cls: "text-destructive", dot: "bg-destructive", ping: false }
+    : { text: "Connessione…", cls: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500", ping: true }
+}
+
+function StatusDot({ look, className }: { look: StatusLook; className?: string }) {
+  return (
+    <span className={cn("relative flex size-2 shrink-0 rounded-full", className)}>
+      {look.ping && <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-50 motion-reduce:animate-none", look.dot)} />}
+      <span className={cn("relative inline-flex size-2 rounded-full", look.dot)} />
+    </span>
   )
 }
 
 const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000
 
-/** Versione nuova del client (GitHub Releases): barra sopra il piè di pagina con «Aggiorna ora».
- *  Nascosta durante una sessione; le versioni private compilate non la mostrano mai. */
+/** Versione nuova del client (GitHub Releases): barra in cima al contenuto con «Aggiorna ora».
+ *  Le versioni private compilate non la mostrano mai. */
 function UpdateBar() {
   const [update, setUpdate] = React.useState<{ version: string; notes: string } | null>(null)
   const [busy, setBusy] = React.useState(false)
@@ -202,7 +291,7 @@ function UpdateBar() {
     invoke("rd_update_install").catch(e => { setBusy(false); toast.error("Aggiornamento non riuscito", { description: String(e) }) })
   }
   return (
-    <div className="bg-primary/10 text-primary flex h-10 shrink-0 items-center gap-2 border-t px-3 text-sm" role="status">
+    <div className="bg-primary/10 text-primary animate-in slide-in-from-top fade-in flex h-10 shrink-0 items-center gap-2 border-b px-3 text-sm duration-300" role="status">
       <ArrowBigUpDashIcon className="size-4 shrink-0" />
       <span className="min-w-0 flex-1 truncate" title={update.notes || undefined}>Aggiornamento disponibile · <span className="font-medium tabular-nums">v{update.version}</span></span>
       <Button size="sm" className="h-7" disabled={busy} onClick={install}>{busy ? <><Spinner /> Aggiornamento…</> : "Aggiorna ora"}</Button>
@@ -213,7 +302,7 @@ function UpdateBar() {
 /** «Controlla un PC»: ID e password di un altro computer; la sessione si apre nella
  *  finestra di visione, in un processo a sé. Senza password la chiede il visore
  *  (o il PC remoto accetta la richiesta). */
-function ConnectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+function ConnectPage({ online }: { online: boolean }) {
   const [id, setId] = React.useState("")
   const [password, setPassword] = React.useState("")
   const [busy, setBusy] = React.useState(false)
@@ -222,56 +311,40 @@ function ConnectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o
     if (!raw) return
     setBusy(true)
     invoke("rd_connect", { id: raw, password })
-      .then(() => { onOpenChange(false); setPassword("") })
+      .then(() => { setPassword(""); toast.success("Finestra di controllo aperta") })
       .catch(e => toast.error(`Connessione non avviata: ${e}`))
       .finally(() => setBusy(false))
   }
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-5 sm:max-w-sm">
-        <DialogHeader className="items-center gap-3 text-center">
-          <Tiles tiles={[["sky", MonitorIcon], ["primary", MousePointer2Icon], ["emerald", KeyRoundIcon]]} />
-          <DialogTitle>Controlla un PC</DialogTitle>
-          <DialogDescription>Vedi e usa un altro computer con il client Merlin-RustDesk o RustDesk.</DialogDescription>
-        </DialogHeader>
-        <form className="flex flex-col gap-4" onSubmit={e => { e.preventDefault(); connect() }}>
-          <FieldGroup>
-            <Field>
-              <FieldLabel htmlFor="connect-id">ID del PC</FieldLabel>
-              <Input id="connect-id" autoFocus inputMode="numeric" value={id} onChange={e => setId(e.target.value)} placeholder="123 456 789" className="font-mono tabular-nums" />
-            </Field>
-            <Field>
-              <FieldLabel htmlFor="connect-pw">Password</FieldLabel>
-              <Input id="connect-pw" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Facoltativa" />
-              <FieldDescription>Senza password, chi sta al PC deve accettare la richiesta.</FieldDescription>
-            </Field>
-          </FieldGroup>
-          <DialogFooter className="gap-2">
-            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Annulla</Button>
-            <Button type="submit" disabled={!raw || busy}>{busy ? <Spinner /> : <MonitorIcon />} Connetti</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+    <>
+      <Hero tiles={[["sky", MonitorIcon], ["primary", MousePointer2Icon], ["emerald", KeyRoundIcon]]}
+        title="Controlla un PC" text="Vedi e usa un altro computer con il client Merlin-RustDesk o RustDesk." />
+      <form className="flex flex-col gap-4" onSubmit={e => { e.preventDefault(); connect() }}>
+        <FieldGroup className="bg-muted/50 gap-3 rounded-xl p-3">
+          <Field>
+            <FieldLabel htmlFor="connect-id">ID del PC</FieldLabel>
+            <Input id="connect-id" autoFocus inputMode="numeric" value={id} onChange={e => setId(e.target.value)} placeholder="123 456 789" className="bg-background font-mono tabular-nums" />
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="connect-pw">Password</FieldLabel>
+            <SecretInput id="connect-pw" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Facoltativa" className="bg-background" />
+            <FieldDescription>Senza password, chi sta al PC deve accettare la richiesta.</FieldDescription>
+          </Field>
+        </FieldGroup>
+        <Button type="submit" size="lg" className="h-11" disabled={!raw || busy || !online}>{busy ? <Spinner /> : <MonitorIcon />} Connetti</Button>
+      </form>
+    </>
   )
 }
 
 /** Barra in alto: logo, nome e stato (in un solo punto). */
 function Header({ status }: { status: number }) {
-  const s = status > 0 ? { text: "Online", cls: "text-emerald-600 dark:text-emerald-400", dot: "bg-emerald-500", ping: true }
-    : status < 0 ? { text: "Offline", cls: "text-destructive", dot: "bg-destructive", ping: false }
-    : { text: "Connessione…", cls: "text-amber-600 dark:text-amber-400", dot: "bg-amber-500", ping: true }
+  const s = statusLook(status)
   return (
     <header data-tauri-drag-region className="flex h-12 shrink-0 items-center gap-2.5 border-b px-4">
       <img src={brand.logo ?? logo} alt="" className="size-7 shrink-0 object-contain" draggable={false} />
       <span className="min-w-0 flex-1 truncate font-[JetBrains_Mono,ui-monospace,monospace] text-sm font-bold tracking-tight">{brand.name}</span>
-      <span className={cn("flex items-center gap-1.5 text-xs", s.cls)}>
-        <span className="relative flex size-2">
-          {s.ping && <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-50", s.dot)} />}
-          <span className={cn("relative inline-flex size-2 rounded-full", s.dot)} />
-        </span>
-        {s.text}
-      </span>
+      <span className={cn("flex items-center gap-1.5 text-xs", s.cls)}><StatusDot look={s} /> {s.text}</span>
     </header>
   )
 }
@@ -310,14 +383,14 @@ function Credentials({ id, password, onNewPassword }: { id: string; password: st
     <div className="grid gap-2">
       <div className="bg-muted/60 flex items-center gap-2 rounded-xl px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">ID</div>
-          <div className="font-mono text-[28px] leading-tight font-semibold tracking-wide tabular-nums select-text">{id ? groupId(id) : "—"}</div>
+          <div className="text-muted-foreground text-[0.6875rem] font-medium">ID</div>
+          <div className="font-mono text-[1.75rem] leading-tight font-semibold tracking-wide tabular-nums select-text">{id ? groupId(id) : "—"}</div>
         </div>
         <IconButton label="Copia l'ID" disabled={!id} onClick={() => copyText(id, "ID")}><CopyIcon /></IconButton>
       </div>
       <div className="bg-muted/60 flex items-center gap-1 rounded-xl px-4 py-3">
         <div className="min-w-0 flex-1">
-          <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">Password</div>
+          <div className="text-muted-foreground text-[0.6875rem] font-medium">Password</div>
           <div className="font-mono text-lg leading-tight tracking-widest select-text">{!password ? "—" : show ? password : "••••••••"}</div>
         </div>
         <IconButton label={show ? "Nascondi" : "Mostra"} disabled={!password} onClick={() => setShow(v => !v)}>{show ? <EyeOffIcon /> : <EyeIcon />}</IconButton>
@@ -488,13 +561,13 @@ function Guide() {
   ]
   return (
     <section className="space-y-1.5">
-      <div className="text-muted-foreground px-1 text-[11px] font-medium tracking-wide uppercase">Come funziona</div>
+      <div className="text-muted-foreground px-1 text-[0.6875rem] font-medium">Come funziona</div>
       <ol className="bg-muted/40 divide-border/60 divide-y rounded-xl">
         {steps.map(([tone, Icon, text], i) => (
           <li key={text} className="flex items-center gap-3 px-3 py-2">
             <span className={cn("grid size-7 shrink-0 place-items-center rounded-md", TONE[tone])}><Icon className="size-4" /></span>
             <span className="min-w-0 flex-1 text-xs">{text}</span>
-            <span className="text-muted-foreground/70 font-mono text-[11px] font-semibold tabular-nums">{i + 1}</span>
+            <span className="text-muted-foreground/70 font-mono text-[0.6875rem] font-semibold tabular-nums">{i + 1}</span>
           </li>
         ))}
       </ol>
@@ -506,7 +579,7 @@ function Guide() {
 function Contacts() {
   return (
     <section className="space-y-1.5">
-      <div className="text-muted-foreground px-1 text-[11px] font-medium tracking-wide uppercase">Contatti dell'assistenza</div>
+      <div className="text-muted-foreground px-1 text-[0.6875rem] font-medium">Contatti dell'assistenza</div>
       <div className="grid grid-cols-2 gap-1.5">
         {brand.contacts.map((c, i) => { const k = CONTACT[c.kind] ?? CONTACT.note; return (
           <Tooltip key={i}>
@@ -525,14 +598,14 @@ function Contacts() {
   )
 }
 
-function UnattendedDialog({ open, onOpenChange, permanentSet, onSaved, install, installing, onInstall, onUninstall }: {
-  open: boolean; onOpenChange: (o: boolean) => void; permanentSet: boolean; onSaved: () => void
+function UnattendedPage({ permanentSet, onSaved, install, installing, onInstall, onUninstall }: {
+  permanentSet: boolean; onSaved: () => void
   install: InstallState; installing: boolean; onInstall: () => void; onUninstall: () => void
 }) {
   const [pw, setPw] = React.useState("")
   const [pw2, setPw2] = React.useState("")
   const [confirmRemove, setConfirmRemove] = React.useState(false)
-  React.useEffect(() => { if (open) { setPw(""); setPw2(""); setConfirmRemove(false) } }, [open])
+  const reset = () => { setPw(""); setPw2(""); setConfirmRemove(false) }
   const installed = install === "installed"
   const tooShort = pw.length > 0 && pw.length < 8
   const mismatch = pw2.length > 0 && pw !== pw2
@@ -540,18 +613,14 @@ function UnattendedDialog({ open, onOpenChange, permanentSet, onSaved, install, 
   const save = async (value: string) => {
     const ok = await invoke<boolean>("rd_set_permanent_password", { password: value }).catch(() => false)
     if (!ok) { toast.error("Password non salvata"); return }
-    onOpenChange(false)
+    reset()
     onSaved()
     toast.success(value ? "Password permanente impostata" : "Password permanente tolta")
   }
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="gap-5 sm:max-w-sm">
-        <DialogHeader className="items-center gap-3 text-center">
-          <Tiles tiles={[["emerald", ShieldCheckIcon], ["primary", KeyRoundIcon], ["sky", PowerIcon]]} />
-          <DialogTitle>Accesso non presidiato</DialogTitle>
-          <DialogDescription>Con una password permanente il tecnico può collegarsi anche quando non sei al computer.</DialogDescription>
-        </DialogHeader>
+    <>
+        <Hero tiles={[["emerald", ShieldCheckIcon], ["primary", KeyRoundIcon], ["sky", PowerIcon]]}
+          title="Accesso non presidiato" text="Con una password permanente il tecnico può collegarsi anche quando non sei al computer." />
         <FieldGroup className="bg-muted/50 gap-4 rounded-xl p-3">
           <Field orientation="horizontal" data-disabled={install === "unsupported" || installing || undefined}>
             <FieldContent>
@@ -587,13 +656,12 @@ function UnattendedDialog({ open, onOpenChange, permanentSet, onSaved, install, 
             {mismatch && <FieldDescription>Le due password non coincidono.</FieldDescription>}
           </Field>
         </FieldGroup>
-        <DialogFooter className="gap-2">
+        <div className="flex justify-end gap-2">
           {permanentSet && <Button variant="ghost" className="text-destructive mr-auto" onClick={() => void save("")}>Togli</Button>}
-          <Button variant="secondary" onClick={() => onOpenChange(false)}>Annulla</Button>
+          {(pw || pw2) && <Button variant="secondary" onClick={reset}>Annulla</Button>}
           <Button disabled={!valid} onClick={() => void save(pw)}><KeyRoundIcon /> Salva</Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </div>
+    </>
   )
 }
 
@@ -773,7 +841,7 @@ function Session({ client, since, chat, onSend, onEnd, compact }: { client: Clie
       </div>
       <div className="flex flex-wrap gap-1.5">
         {PERMS.filter(([k]) => client[k]).map(([k, label, Icon]) => (
-          <span key={k} className="bg-muted text-muted-foreground inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px]"><Icon className="size-3" /> {label}</span>
+          <span key={k} className="bg-muted text-muted-foreground inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[0.6875rem]"><Icon className="size-3" /> {label}</span>
         ))}
       </div>
       <ScrollArea className="bg-muted/40 min-h-0 flex-1 rounded-xl">
@@ -819,6 +887,25 @@ function ThemeSwitch({ className }: { className?: string }) {
         </Tooltip>
       ))}
     </div>
+  )
+}
+
+/** Tema in un solo pulsante (sidebar stretta): automatico → chiaro → scuro. */
+function ThemeCycle() {
+  const [t, setT] = React.useState<ThemeChoice>(getTheme)
+  const opts: Array<[ThemeChoice, LucideIcon, string]> = [["system", LaptopIcon, "Come il sistema"], ["light", SunIcon, "Chiaro"], ["dark", MoonIcon, "Scuro"]]
+  const i = opts.findIndex(([v]) => v === t)
+  const [, Icon, label] = opts[i] ?? opts[0]
+  const next = opts[(i + 1) % opts.length][0]
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button variant="ghost" size="icon" className="text-muted-foreground size-7" aria-label={`Tema: ${label}`} onClick={() => { setTheme(next); setT(next) }}>
+          <Icon className="size-3.5" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="right">Tema: {label}</TooltipContent>
+    </Tooltip>
   )
 }
 

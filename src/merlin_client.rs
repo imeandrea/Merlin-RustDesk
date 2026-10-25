@@ -22,7 +22,7 @@ pub use crate::core_main::{core_main, CoreMainAction};
 /// Must run first in `main`, before `core_main`.
 pub fn init(app_name: &str, server: &str, key: &str, relay: &str, api: &str) {
     *APP_NAME.write().unwrap() = app_name.to_owned();
-    for (opt, value) in [("custom-rendezvous-server", server), ("key", key), ("relay-server", relay), ("api-server", api)] {
+    for (opt, value) in [("custom-rendezvous-server", server), ("key", key), ("relay-server", relay), ("api-server", api), (SERVER_SOURCE_OPTION, "")] {
         if Config::get_option(opt) != value {
             Config::set_option(opt.to_owned(), value.to_owned());
         }
@@ -224,9 +224,27 @@ async fn assistance_call(action: &str) -> Result<(), String> {
 /// Option with the server type of a client configured by its user.
 const SERVER_TYPE_OPTION: &str = "merlin-server-type";
 
-/// Client without a locked server: only the app name, the user's settings stay.
+/// Marks a server typed in by the user of the client. A locked client (Merlin's
+/// customization) writes its server in the same config: without this mark a
+/// client without a locked server must not pick it up.
+const SERVER_SOURCE_OPTION: &str = "merlin-server-source";
+const SERVER_SOURCE_USER: &str = "user";
+
+fn is_user_server(source: &str) -> bool {
+    source == SERVER_SOURCE_USER
+}
+
+/// Client without a locked server: only the app name, the user's settings stay;
+/// a server left by a locked client is forgotten.
 pub fn init_app_name(app_name: &str) {
     *APP_NAME.write().unwrap() = app_name.to_owned();
+    if !is_user_server(&Config::get_option(SERVER_SOURCE_OPTION)) {
+        for opt in ["custom-rendezvous-server", "key", "relay-server", "api-server", SERVER_TYPE_OPTION] {
+            if !Config::get_option(opt).is_empty() {
+                Config::set_option(opt.to_owned(), String::new());
+            }
+        }
+    }
 }
 
 /// Server chosen by the user of the client: (server, key, relay, api, type).
@@ -239,7 +257,7 @@ pub fn user_server() -> (String, String, String, String, String) {
 /// Saves the server chosen by the user, here and in the running server or
 /// service (IPC), which reconnects to the new rendezvous server.
 pub fn set_user_server(server: &str, key: &str, relay: &str, api: &str, kind: &str) {
-    let values = [("custom-rendezvous-server", server), ("key", key), ("relay-server", relay), ("api-server", api), (SERVER_TYPE_OPTION, kind)];
+    let values = [("custom-rendezvous-server", server), ("key", key), ("relay-server", relay), ("api-server", api), (SERVER_TYPE_OPTION, kind), (SERVER_SOURCE_OPTION, SERVER_SOURCE_USER)];
     // Options as the server process has them (synced), so no other option is lost.
     let synced: std::collections::HashMap<String, String> = serde_json::from_str(&crate::ui_interface::get_options()).unwrap_or_default();
     let mut options = if synced.is_empty() { Config::get_options() } else { synced };
@@ -328,5 +346,16 @@ mod switch_sides_tests {
         set_switch_sides_handler(move |peer, uuid| sink.lock().unwrap().push((peer, uuid)));
         on_switch_sides_request("42", "u");
         assert_eq!(*got.lock().unwrap(), vec![("42".to_owned(), "u".to_owned())]);
+    }
+}
+
+#[cfg(test)]
+mod server_source_tests {
+    use super::is_user_server;
+
+    #[test]
+    fn only_a_server_typed_by_the_user_is_kept() {
+        assert!(is_user_server("user"));
+        assert!(!is_user_server(""));
     }
 }

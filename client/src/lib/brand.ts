@@ -11,15 +11,18 @@ export type ContactKind = "phone" | "email" | "web" | "whatsapp" | "hours" | "no
 export interface Contact { kind: ContactKind; value: string }
 export interface Brand { name: string; color?: string; logo?: string; contacts: Contact[]
   /** Pulsante «Chiedi assistenza» (solo con il server Merlin, deciso dal client). */
-  assistance: boolean }
+  assistance: boolean
+  /** «Controlla un PC» (la personalizzazione può toglierlo). */
+  outgoing: boolean }
 
-export const brand: Brand = { name: "Merlin-RustDesk", contacts: [], assistance: false }
+export const brand: Brand = { name: "Merlin-RustDesk", contacts: [], assistance: false, outgoing: true }
 
 /** Legge la personalizzazione dal client e applica il colore. */
 export async function loadBrand() {
   const b = await invoke<Partial<Brand> | null>("rd_brand").catch(() => null)
   if (!b) return
   brand.assistance = b.assistance === true
+  brand.outgoing = b.outgoing !== false
   if (typeof b.name === "string" && b.name.trim()) brand.name = b.name.trim()
   if (typeof b.logo === "string" && b.logo.startsWith("data:image/")) brand.logo = b.logo
   if (Array.isArray(b.contacts)) brand.contacts = b.contacts.filter(c => c && typeof c.value === "string" && c.value.trim()).slice(0, 4)

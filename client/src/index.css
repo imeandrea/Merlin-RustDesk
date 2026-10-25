@@ -270,6 +270,10 @@
 
 /* Client: niente selezione del testo, tranne dove serve (select-text) e nei campi. */
 html, body { -webkit-user-select: none; user-select: none; overflow: hidden; }
+/* Finestre del client (non il visore): l'interfaccia scala con l'altezza della
+   finestra, così entra anche negli schermi bassi. 16px a 560px di altezza (la
+   misura di progetto), mai sotto 12px: misure e testi sono in rem. */
+html.fit { font-size: clamp(12px, 2.857vh, 16px); }
 input, textarea, .select-text { -webkit-user-select: text; user-select: text; }
 
 /* Campi password: niente indicatore di Bloc Maiusc e pulsante del portachiavi
