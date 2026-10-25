@@ -200,10 +200,14 @@ impl InvokeUiSession for ViewerHandler {
     /// The technician takes control back: swap again (their Merlin connects
     /// to this computer) and close, as RustDesk's UI does.
     fn switch_back(&self, _id: &str) {
-        if let Some(session) = SESSION.get() {
-            session.switch_sides();
+        // Called from RustDesk's io loop (a Tokio runtime): `switch_sides` starts
+        // its own, so it runs on another thread; close only after it was sent.
+        if let Some(session) = SESSION.get().cloned() {
             self.emit(json!({ "ev": "switched_back" }));
-            session.close();
+            std::thread::spawn(move || {
+                session.switch_sides();
+                session.close();
+            });
         }
     }
     fn portable_service_running(&self, _running: bool) {}
@@ -532,6 +536,15 @@ mod tests {
         assert_eq!(remote_join("C:\\", "doc.txt", true), "C:\\doc.txt");
         assert_eq!(remote_join("/home/a", "doc.txt", false), "/home/a/doc.txt");
         assert_eq!(remote_join("/", "doc.txt", false), "/doc.txt");
+    }
+
+    /// RustDesk calls `switch_back` from inside its io loop (a Tokio runtime):
+    /// `switch_sides` starts its own runtime and must not run on that thread.
+    #[test]
+    fn switch_back_inside_the_io_loop_does_not_panic() {
+        let _ = SESSION.set(Session::default());
+        let rt = hbb_common::tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        rt.block_on(async { ViewerHandler::default().switch_back("123") });
     }
 
     #[test]
