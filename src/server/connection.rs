@@ -2015,6 +2015,8 @@ impl Connection {
             platform_additions.insert("support_view_camera".into(), json!(true));
         }
 
+        #[cfg(all(feature = "merlin", any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+        platform_additions.insert("merlin".into(), json!(true));
         #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         if !platform_additions.is_empty() {
             pi.platform_additions = serde_json::to_string(&platform_additions).unwrap_or("".into());

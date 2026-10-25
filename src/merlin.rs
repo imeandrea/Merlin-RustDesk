@@ -138,7 +138,11 @@ impl InvokeUiSession for MerlinHandler {
         }));
     }
     fn set_displays(&self, _displays: &Vec<DisplayInfo>) {}
-    fn set_platform_additions(&self, _data: &str) {}
+    /// The peer is a Merlin build (client or Merlin's host mode): it can switch
+    /// sides without the hbbs key exchange RustDesk 1.5 requires.
+    fn set_platform_additions(&self, data: &str) {
+        emit(json!({ "ev": "peer_additions", "merlin": is_merlin_peer(data) }));
+    }
     fn on_connected(&self, _conn_type: ConnType) {
         emit(json!({ "ev": "connected" }));
     }
@@ -247,6 +251,10 @@ fn str_of<'a>(v: &'a Value, k: &str) -> &'a str {
 
 fn bool_of(v: &Value, k: &str) -> bool {
     v.get(k).and_then(|x| x.as_bool()).unwrap_or(false)
+}
+
+fn is_merlin_peer(platform_additions: &str) -> bool {
+    serde_json::from_str::<Value>(platform_additions).is_ok_and(|v| v["merlin"].as_bool() == Some(true))
 }
 
 fn app_name_for(_cmd: &str) -> &'static str {
@@ -445,6 +453,13 @@ mod tests {
         for cmd in ["connect", "host", "id"] {
             assert_eq!(app_name_for(cmd), HOST_APP_NAME);
         }
+    }
+
+    #[test]
+    fn merlin_peer_from_platform_additions() {
+        assert!(is_merlin_peer(r#"{"merlin":true,"is_installed":false}"#));
+        assert!(!is_merlin_peer(r#"{"is_installed":true}"#));
+        assert!(!is_merlin_peer(""));
     }
 
     #[test]
