@@ -69,3 +69,6 @@ client/src-tauri/target/
 
 # Credenziali Apple per la notarizzazione (solo sul Mac)
 .env.notary
+
+# Chiave privata degli aggiornamenti del client (solo sul Mac)
+secrets/
