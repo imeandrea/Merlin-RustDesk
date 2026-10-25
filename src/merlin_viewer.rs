@@ -2,8 +2,9 @@
 // Merlin-RustDesk — modified version of RustDesk (https://github.com/rustdesk/rustdesk).
 // New file, Copyright (C) 2026 imeandrea.
 
-//! Viewer of the Merlin-RustDesk client for switching sides: the technician
-//! asked to swap roles, so this client controls the technician's computer.
+//! Viewer of the Merlin-RustDesk client: controls a remote computer, either
+//! after the technician asked to switch sides or on a normal connection
+//! started by the user (ID and password).
 
 use std::sync::{atomic::AtomicUsize, Arc, Mutex, OnceLock, RwLock};
 
@@ -47,6 +48,33 @@ pub fn is_login_prompt(msgtype: &str) -> bool {
     msgtype.ends_with("input-password")
 }
 
+#[derive(Debug, PartialEq)]
+pub enum LoginPrompt {
+    /// Switch sides: the code was not accepted, the viewer never logs in another way.
+    Close,
+    /// Normal connection: the page asks for the password (again, if `wrong`).
+    Ask { wrong: bool },
+    None,
+}
+
+pub fn login_prompt_action(switch: bool, msgtype: &str) -> LoginPrompt {
+    if !is_login_prompt(msgtype) {
+        LoginPrompt::None
+    } else if switch {
+        LoginPrompt::Close
+    } else {
+        LoginPrompt::Ask { wrong: msgtype.starts_with("re-") }
+    }
+}
+
+/// What the viewer connects with.
+pub enum ViewerTarget {
+    /// Code of a pending switch (checked with the local server by RustDesk's login).
+    Switch(String),
+    /// Normal connection; empty: the page asks for it, or the remote user accepts.
+    Password(String),
+}
+
 #[derive(Default)]
 struct Screen {
     w: usize,
@@ -56,6 +84,7 @@ struct Screen {
 
 #[derive(Clone)]
 pub struct ViewerHandler {
+    switch: bool,
     screen: Arc<Mutex<Screen>>,
     on_event: EventFn,
     on_tile: TileFn,
@@ -63,7 +92,7 @@ pub struct ViewerHandler {
 
 impl Default for ViewerHandler {
     fn default() -> Self {
-        Self { screen: Default::default(), on_event: Arc::new(|_| {}), on_tile: Arc::new(|_| {}) }
+        Self { switch: false, screen: Default::default(), on_event: Arc::new(|_| {}), on_tile: Arc::new(|_| {}) }
     }
 }
 
@@ -154,14 +183,16 @@ impl InvokeUiSession for ViewerHandler {
         self.send_changes(rgba);
     }
     fn msgbox(&self, msgtype: &str, title: &str, text: &str, _link: &str, _retry: bool) {
-        if is_login_prompt(msgtype) {
-            self.emit(json!({ "ev": "msgbox", "type": "error", "title": title, "text": "Lo scambio dei ruoli non è valido o è scaduto." }));
-            if let Some(session) = SESSION.get() {
-                session.close();
+        match login_prompt_action(self.switch, msgtype) {
+            LoginPrompt::Close => {
+                self.emit(json!({ "ev": "msgbox", "type": "error", "title": title, "text": "Lo scambio dei ruoli non è valido o è scaduto." }));
+                if let Some(session) = SESSION.get() {
+                    session.close();
+                }
             }
-            return;
+            LoginPrompt::Ask { wrong } => self.emit(json!({ "ev": "need_password", "wrong": wrong })),
+            LoginPrompt::None => self.emit(json!({ "ev": "msgbox", "type": msgtype, "title": title, "text": text })),
         }
-        self.emit(json!({ "ev": "msgbox", "type": msgtype, "title": title, "text": text }));
     }
     fn cancel_msgbox(&self, _tag: &str) {}
     /// The technician takes control back: swap again (their Merlin connects
@@ -215,16 +246,18 @@ impl ViewerHandle {
     pub fn switch_display(&self, display: i32) {
         self.session.switch_display(display);
     }
+    pub fn login(&self, password: &str) {
+        self.session.login(String::new(), String::new(), password.to_owned(), false);
+    }
     pub fn close(&self) {
         self.session.close();
     }
 }
 
-/// Connects to `peer_id` with the code of a pending switch (checked with the
-/// local server by RustDesk's login). `None` if the process cannot start RustDesk.
+/// Connects to `peer_id`. `None` if the process cannot start RustDesk.
 pub fn start_viewer(
     peer_id: String,
-    switch_uuid: String,
+    target: ViewerTarget,
     on_event: impl Fn(Value) + Send + Sync + 'static,
     on_tile: impl Fn(Vec<u8>) + Send + Sync + 'static,
 ) -> Option<ViewerHandle> {
@@ -232,16 +265,21 @@ pub fn start_viewer(
         return None;
     }
     let on_event: EventFn = Arc::new(on_event);
+    let (switch_uuid, password) = match target {
+        ViewerTarget::Switch(uuid) => (Some(uuid), String::new()),
+        ViewerTarget::Password(password) => (None, password),
+    };
     let session: Session<ViewerHandler> = Session {
+        password,
         server_keyboard_enabled: Arc::new(RwLock::new(true)),
         server_file_transfer_enabled: Arc::new(RwLock::new(false)),
         server_clipboard_enabled: Arc::new(RwLock::new(true)),
         reconnect_count: Arc::new(AtomicUsize::new(0)),
-        ui_handler: ViewerHandler { screen: Default::default(), on_event: on_event.clone(), on_tile: Arc::new(on_tile) },
+        ui_handler: ViewerHandler { switch: switch_uuid.is_some(), screen: Default::default(), on_event: on_event.clone(), on_tile: Arc::new(on_tile) },
         ..Default::default()
     };
     let _ = SESSION.set(session.clone());
-    session.lc.write().unwrap().initialize(peer_id, ConnType::DEFAULT_CONN, Some(switch_uuid), false, None, None, None);
+    session.lc.write().unwrap().initialize(peer_id, ConnType::DEFAULT_CONN, switch_uuid, false, None, None, None);
     {
         let session = session.clone();
         std::thread::spawn(move || {
@@ -280,5 +318,13 @@ mod tests {
         assert!(is_login_prompt("re-input-password"));
         assert!(!is_login_prompt("error"));
         assert!(!is_login_prompt("success"));
+    }
+
+    #[test]
+    fn password_is_asked_only_for_a_normal_connection() {
+        assert_eq!(login_prompt_action(true, "input-password"), LoginPrompt::Close);
+        assert_eq!(login_prompt_action(false, "input-password"), LoginPrompt::Ask { wrong: false });
+        assert_eq!(login_prompt_action(false, "re-input-password"), LoginPrompt::Ask { wrong: true });
+        assert_eq!(login_prompt_action(false, "error"), LoginPrompt::None);
     }
 }

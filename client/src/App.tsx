@@ -100,6 +100,7 @@ function MainWindow() {
   // Server: bloccato (personalizzazione o versione privata) o scelto da chi usa il client.
   const [server, setServer] = React.useState<ServerConfig | null>(null)
   const [serverOpen, setServerOpen] = React.useState(false)
+  const [connectOpen, setConnectOpen] = React.useState(false)
   const loadServer = React.useCallback(() => { void invoke<ServerConfig>("rd_server_config").then(setServer).catch(() => {}) }, [])
   React.useEffect(loadServer, [loadServer])
   const needsSetup = server !== null && !server.locked && !server.configured
@@ -143,6 +144,7 @@ function MainWindow() {
         {server && !server.locked && server.configured && (
           <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setServerOpen(true)}><ServerIcon /> Server</Button>
         )}
+        <Button variant="ghost" size="sm" className="text-muted-foreground" onClick={() => setConnectOpen(true)}><MonitorIcon /> Controlla un PC</Button>
         <ThemeSwitch className="ml-auto" />
         <Tooltip>
           <TooltipTrigger asChild>
@@ -163,6 +165,7 @@ function MainWindow() {
           {server && <ServerForm config={server} onSaved={() => { setServerOpen(false); loadServer(); setTimeout(refresh, 500) }} />}
         </DialogContent>
       </Dialog>
+      <ConnectDialog open={connectOpen} onOpenChange={setConnectOpen} />
       <AboutDialog open={aboutOpen} onOpenChange={setAboutOpen} version={info?.version ?? ""} />
       <UnattendedDialog open={settingsOpen} onOpenChange={setSettingsOpen} permanentSet={!!info?.permanentSet} onSaved={refresh}
         install={info?.install ?? "unsupported"} installing={installing}
@@ -172,6 +175,52 @@ function MainWindow() {
         }}
         onUninstall={() => { void invoke("rd_uninstall").catch(e => toast.error(`Disinstallazione non riuscita: ${e}`)) }} />
     </div>
+  )
+}
+
+/** «Controlla un PC»: ID e password di un altro computer; la sessione si apre nella
+ *  finestra di visione, in un processo a sé. Senza password la chiede il visore
+ *  (o il PC remoto accetta la richiesta). */
+function ConnectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const [id, setId] = React.useState("")
+  const [password, setPassword] = React.useState("")
+  const [busy, setBusy] = React.useState(false)
+  const raw = id.replace(/\s/g, "")
+  const connect = () => {
+    if (!raw) return
+    setBusy(true)
+    invoke("rd_connect", { id: raw, password })
+      .then(() => { onOpenChange(false); setPassword("") })
+      .catch(e => toast.error(`Connessione non avviata: ${e}`))
+      .finally(() => setBusy(false))
+  }
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="gap-5 sm:max-w-sm">
+        <DialogHeader className="items-center gap-3 text-center">
+          <Tiles tiles={[["sky", MonitorIcon], ["primary", MousePointer2Icon], ["emerald", KeyRoundIcon]]} />
+          <DialogTitle>Controlla un PC</DialogTitle>
+          <DialogDescription>Vedi e usa un altro computer con il client Merlin-RustDesk o RustDesk.</DialogDescription>
+        </DialogHeader>
+        <form className="flex flex-col gap-4" onSubmit={e => { e.preventDefault(); connect() }}>
+          <FieldGroup>
+            <Field>
+              <FieldLabel htmlFor="connect-id">ID del PC</FieldLabel>
+              <Input id="connect-id" autoFocus inputMode="numeric" value={id} onChange={e => setId(e.target.value)} placeholder="123 456 789" className="font-mono tabular-nums" />
+            </Field>
+            <Field>
+              <FieldLabel htmlFor="connect-pw">Password</FieldLabel>
+              <Input id="connect-pw" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Facoltativa" />
+              <FieldDescription>Senza password, chi sta al PC deve accettare la richiesta.</FieldDescription>
+            </Field>
+          </FieldGroup>
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Annulla</Button>
+            <Button type="submit" disabled={!raw || busy}>{busy ? <Spinner /> : <MonitorIcon />} Connetti</Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }
 

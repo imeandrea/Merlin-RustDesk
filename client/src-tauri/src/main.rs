@@ -198,6 +198,29 @@ fn rd_exit(app: AppHandle) {
     app.exit(0)
 }
 
+/// «Controlla un PC»: la finestra di visione in un processo a sé; la password
+/// passa dallo standard input, non tra gli argomenti.
+#[tauri::command]
+fn rd_connect(id: String, password: String) -> Result<(), String> {
+    use std::io::Write;
+    let id: String = id.chars().filter(|c| !c.is_whitespace()).collect();
+    if id.is_empty() {
+        return Err("ID mancante".into());
+    }
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let mut child = std::process::Command::new(exe)
+        .args(["--merlin-connect", &id])
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("finestra di controllo non avviata: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(format!("{password}\n").as_bytes()).map_err(|e| e.to_string())?;
+    }
+    // Raccoglie il processo quando la finestra si chiude (niente processi «zombie»).
+    std::thread::spawn(move || child.wait());
+    Ok(())
+}
+
 #[tauri::command]
 fn cm_authorize(id: i32) {
     rd::cm_authorize(id)
@@ -273,9 +296,15 @@ fn main() {
     }
     let context = tauri::generate_context!();
     // Inversione di ruolo: finestra di visione del computer del tecnico, processo a sé.
-    if let Some((peer, uuid)) = viewer::parse_args(&std::env::args().collect::<Vec<_>>()) {
-        let name = brand["name"].as_str().filter(|n| !n.is_empty()).unwrap_or("Merlin-RustDesk").to_owned();
-        return viewer::run(&name, peer, uuid, context);
+    let argv: Vec<String> = std::env::args().collect();
+    let name = brand["name"].as_str().filter(|n| !n.is_empty()).unwrap_or("Merlin-RustDesk").to_owned();
+    if let Some((peer, uuid)) = viewer::parse_args(&argv) {
+        return viewer::run(&name, peer, librustdesk::merlin_viewer::ViewerTarget::Switch(uuid), context);
+    }
+    // «Controlla un PC»: connessione normale verso un altro computer.
+    if let Some(peer) = viewer::parse_connect_args(&argv) {
+        let password = viewer::read_password();
+        return viewer::run(&name, peer, librustdesk::merlin_viewer::ViewerTarget::Password(password), context);
     }
     // `--tray`: lo lancia il servizio all'accesso dell'utente (client
     // installato). Al posto della tray di RustDesk parte questa interfaccia,
@@ -310,16 +339,16 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            rd_info, rd_brand, rd_request_assistance, rd_server_config, rd_set_server_config, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
+            rd_info, rd_brand, rd_connect, rd_request_assistance, rd_server_config, rd_set_server_config, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
         ])
         .setup(move |app| {
             // Il pulsante «Chiedi assistenza» occupa una riga: finestra più alta, mai scorrimento.
             let extra = if !cm && (assistance_enabled() || !current_server().5) { 56.0 } else { 0.0 };
-            let (label, url, w, h) = if cm { ("cm", "index.html#cm", 400.0, 600.0) } else { ("main", "index.html", 420.0, 680.0 + extra) };
+            let (label, url, w, h) = if cm { ("cm", "index.html#cm", 400.0, 600.0) } else { ("main", "index.html", 520.0, 680.0 + extra) };
             let win = WebviewWindowBuilder::new(app, label, WebviewUrl::App(url.into()))
                 .title(BRAND.get().and_then(|b| b["name"].as_str()).filter(|n| !n.is_empty()).unwrap_or("Merlin-RustDesk"))
                 .inner_size(w, h)
-                .min_inner_size(400.0, if cm { 560.0 } else { 640.0 + extra })
+                .min_inner_size(if cm { 400.0 } else { 500.0 }, if cm { 560.0 } else { 640.0 + extra })
                 .visible(!tray_start)
                 .build()?;
             if !cm {

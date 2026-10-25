@@ -2,14 +2,16 @@
 // Merlin-RustDesk — modified version of RustDesk (https://github.com/rustdesk/rustdesk).
 // New file, Copyright (C) 2026 imeandrea.
 
-// Finestra di visione per l'inversione di ruolo: il tecnico ha chiesto di
-// scambiare i ruoli e questo client vede e comanda il suo computer. La lancia
-// il server del client (`--merlin-view <id> --switch_uuid <codice>`) come
-// utente collegato; il codice lo verifica il login di RustDesk col server locale.
+// Finestra di visione: questo client vede e comanda un altro computer, processo a sé.
+// - Inversione di ruolo: la lancia il server del client (`--merlin-view <id>
+//   --switch_uuid <codice>`) come utente collegato; il codice lo verifica il
+//   login di RustDesk col server locale.
+// - «Controlla un PC» dalla finestra principale: `--merlin-connect <id>`, la
+//   password arriva dallo standard input (mai tra gli argomenti, visibili a tutti).
 
 use std::sync::Mutex;
 
-use librustdesk::merlin_viewer::{start_viewer, ViewerHandle};
+use librustdesk::merlin_viewer::{start_viewer, ViewerHandle, ViewerTarget};
 use serde_json::Value;
 use tauri::{
     ipc::{Channel, Response},
@@ -17,17 +19,17 @@ use tauri::{
 };
 
 static HANDLE: Mutex<Option<ViewerHandle>> = Mutex::new(None);
-static TARGET: Mutex<Option<(String, String)>> = Mutex::new(None);
+static TARGET: Mutex<Option<(String, ViewerTarget)>> = Mutex::new(None);
 
 #[tauri::command]
 fn viewer_start(on_tile: Channel<Response>, on_event: Channel<Value>) -> Result<(), String> {
-    let Some((peer, uuid)) = TARGET.lock().unwrap().take() else {
+    let Some((peer, target)) = TARGET.lock().unwrap().take() else {
         return Err("visione già avviata".into());
     };
     let events = on_event.clone();
     let handle = start_viewer(
         peer,
-        uuid,
+        target,
         move |ev| {
             let _ = events.send(ev);
         },
@@ -52,6 +54,7 @@ fn viewer_input(input: Value) {
         "key" => h.key(s("code"), b("down"), n("locks")),
         "text" => h.text(s("text")),
         "display" => h.switch_display(n("display")),
+        "login" => h.login(s("password")),
         _ => {}
     }
 }
@@ -74,9 +77,27 @@ pub fn parse_args(args: &[String]) -> Option<(String, String)> {
     }
 }
 
-pub fn run(title: &str, peer: String, uuid: String, context: tauri::Context<tauri::Wry>) {
-    *TARGET.lock().unwrap() = Some((peer.clone(), uuid));
-    let title = format!("{title} — computer del tecnico ({peer})");
+/// Argomenti `--merlin-connect <id>` (connessione normale, password dallo standard input).
+pub fn parse_connect_args(args: &[String]) -> Option<String> {
+    match args {
+        [_, flag, id, ..] if flag == "--merlin-connect" && !id.is_empty() => Some(id.clone()),
+        _ => None,
+    }
+}
+
+/// Password della connessione normale: una riga dallo standard input (vuota se non c'è).
+pub fn read_password() -> String {
+    let mut line = String::new();
+    let _ = std::io::stdin().read_line(&mut line);
+    line.trim_end_matches(['\r', '\n']).to_owned()
+}
+
+pub fn run(title: &str, peer: String, target: ViewerTarget, context: tauri::Context<tauri::Wry>) {
+    let title = match target {
+        ViewerTarget::Switch(_) => format!("{title} — computer del tecnico ({peer})"),
+        ViewerTarget::Password(_) => format!("{title} — {peer}"),
+    };
+    *TARGET.lock().unwrap() = Some((peer, target));
     tauri::Builder::default()
         .on_window_event(|w, ev| {
             if let tauri::WindowEvent::CloseRequested { .. } = ev {
@@ -114,5 +135,12 @@ mod tests {
         assert_eq!(parse_args(&args(&["c", "--merlin-view", "123"])), None);
         assert_eq!(parse_args(&args(&["c", "--connect", "123", "--switch_uuid", "u"])), None);
         assert_eq!(parse_args(&args(&["c", "--merlin-view", "", "--switch_uuid", "u"])), None);
+    }
+
+    #[test]
+    fn connect_args_need_only_the_id() {
+        assert_eq!(parse_connect_args(&args(&["c", "--merlin-connect", "123"])), Some("123".into()));
+        assert_eq!(parse_connect_args(&args(&["c", "--merlin-connect", ""])), None);
+        assert_eq!(parse_connect_args(&args(&["c", "--merlin-view", "123"])), None);
     }
 }

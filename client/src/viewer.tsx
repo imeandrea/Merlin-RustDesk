@@ -4,9 +4,10 @@
 
 import * as React from "react"
 import { Channel, invoke } from "@tauri-apps/api/core"
-import { MonitorIcon, XIcon } from "lucide-react"
+import { KeyRoundIcon, MonitorIcon, XIcon } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 
@@ -27,7 +28,10 @@ const input = (v: Record<string, unknown>) => { void invoke("viewer_input", { in
 export default function Viewer() {
   const canvasRef = React.useRef<HTMLCanvasElement>(null)
   const [status, setStatus] = React.useState<"connecting" | "live" | "ended">("connecting")
-  const [message, setMessage] = React.useState("Collegamento al computer del tecnico…")
+  const [message, setMessage] = React.useState("Collegamento…")
+  /** Il PC remoto chiede la password (connessione normale); wrong: quella data era sbagliata. */
+  const [needPassword, setNeedPassword] = React.useState<{ wrong: boolean } | null>(null)
+  const [password, setPassword] = React.useState("")
   const [host, setHost] = React.useState("")
   const [displays, setDisplays] = React.useState(1)
   const [current, setCurrent] = React.useState(0)
@@ -46,6 +50,7 @@ export default function Viewer() {
       if (c.width !== dw || c.height !== dh) { c.width = dw; c.height = dh }
       ctx.putImageData(new ImageData(new Uint8ClampedArray(buf, 12, w * h * 4), w, h), x, y)
       setStatus("live")
+      setNeedPassword(null)
     }
     const onEvent = new Channel<ViewerEvent>()
     onEvent.onmessage = e => {
@@ -58,8 +63,11 @@ export default function Viewer() {
         case "switch_display": setCurrent(Number(e.display ?? 0)); break
         case "cursor": cursors.current.set(String(e.id), `url(data:image/png;base64,${e.png}) ${e.hotx} ${e.hoty}, default`); break
         case "cursor_id": setCursor(cursors.current.get(String(e.id)) ?? "default"); break
+        case "need_password": setNeedPassword({ wrong: e.wrong === true }); break
         case "msgbox":
           if (String(e.type).includes("error")) { setStatus("ended"); setMessage(String(e.text || e.title)) }
+          // Attesa dell'accettazione sul PC remoto e simili.
+          else if (e.text) setMessage(String(e.text))
           break
         case "switched_back": setStatus("ended"); setMessage("Il tecnico ha ripreso il controllo."); break
         case "ended":
@@ -116,7 +124,7 @@ export default function Viewer() {
     <div className="bg-background text-foreground flex h-screen flex-col select-none">
       <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
         <MonitorIcon className="text-muted-foreground size-4 shrink-0" />
-        <span className="truncate text-sm font-medium">Computer del tecnico</span>
+        <span className="truncate text-sm font-medium">Controllo remoto</span>
         {host && <span className="text-muted-foreground truncate text-xs">· {host}</span>}
         <div className="ml-auto flex items-center gap-1">
           {displays > 1 && Array.from({ length: displays }, (_, i) => (
@@ -142,8 +150,25 @@ export default function Viewer() {
           }} />
         {status !== "live" && (
           <div className="bg-background absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm">
-            {status === "connecting" && <Spinner />}
-            <span className="text-muted-foreground max-w-80 text-center">{message}</span>
+            {status === "connecting" && !needPassword && <Spinner />}
+            {status === "connecting" && needPassword ? (
+              <form className="flex w-72 flex-col gap-2" onSubmit={e => {
+                e.preventDefault()
+                if (!password) return
+                input({ t: "login", password })
+                setPassword("")
+                setNeedPassword(null)
+              }}>
+                <span className="flex items-center gap-2 font-medium"><KeyRoundIcon className="size-4" />{needPassword.wrong ? "Password errata" : "Il PC remoto chiede la password"}</span>
+                <div className="flex gap-2">
+                  <Input type="password" autoFocus value={password} onChange={e => setPassword(e.target.value)} placeholder="Password del PC remoto" aria-invalid={needPassword.wrong} />
+                  <Button type="submit" disabled={!password}>Connetti</Button>
+                </div>
+                <span className="text-muted-foreground text-xs">Oppure attendi che sul PC remoto accettino la richiesta.</span>
+              </form>
+            ) : (
+              <span className="text-muted-foreground max-w-80 text-center">{message}</span>
+            )}
           </div>
         )}
       </div>
