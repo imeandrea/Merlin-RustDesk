@@ -34,9 +34,11 @@ KEY="$ROOT/secrets/client-updater.key"
 [ -r "$KEY" ] || { echo "manca $KEY (chiave degli aggiornamenti)" >&2; exit 1; }
 WORK="$(mktemp -d)"; trap 'rm -rf "$WORK"' EXIT
 FEED='{}'
-sign() {  # firma minisign (formato tauri) di $1, stampata in base64
-  ( cd "$ROOT/client" && TAURI_SIGNING_PRIVATE_KEY_PATH="$KEY" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" npx --no-install tauri signer sign "$1" >/dev/null )
-  cat "$1.sig"; rm -f "$1.sig"
+sign() {  # firma minisign (formato tauri) di $1, stampata in base64; si ferma se fallisce
+  local abs; abs="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
+  ( cd "$ROOT/client" && TAURI_SIGNING_PRIVATE_KEY_PATH="$KEY" TAURI_SIGNING_PRIVATE_KEY_PASSWORD="" npx --no-install tauri signer sign "$abs" >/dev/null ) || return 1
+  [ -s "$abs.sig" ] || return 1
+  cat "$abs.sig"; rm -f "$abs.sig"
 }
 upload() {  # $1 file, $2 nome nella release
   old="$(curl -fsS "${auth[@]}" "$API/releases/$ID/assets?per_page=100" | json "print(next((str(a['id']) for a in d if a['name']=='$2'), ''))")"
@@ -54,7 +56,7 @@ for file in "$@"; do
     *) echo "estensione non prevista: $file" >&2; exit 1 ;;
   esac
   if [ -n "$platform" ]; then
-    sig="$(sign "$file")"
+    sig="$(sign "$file")" || { echo "firma non riuscita: $file" >&2; exit 1; }
     FEED="$(FEED="$FEED" P="$platform" U="https://github.com/$REPO/releases/download/v$VERSION/$name" S="$sig" python3 -c 'import json,os; d=json.loads(os.environ["FEED"]); d[os.environ["P"]]={"url":os.environ["U"],"signature":os.environ["S"]}; print(json.dumps(d))')"
   fi
   upload "$file" "$name"
