@@ -299,6 +299,7 @@ fn handle_command(session: &Session<MerlinHandler>, sid: &SessionID, cmd: &Value
         "reconnect" => session.reconnect(false),
         "close" => session.close(),
         "switch_sides" => {
+            log::info!("merlin: switch sides requested to {}", session.get_id());
             let session = session.clone();
             std::thread::spawn(move || session.switch_sides());
         }
@@ -401,7 +402,10 @@ fn run_host(cfg: &Value, lines: impl Iterator<Item = std::io::Result<String>>) {
     apply_server(cfg);
     mc::start_status_sync();
     mc::start_cm(|ev| emit(json!({ "ev": "cm", "data": ev })));
-    mc::set_switch_sides_handler(|id, uuid| emit(json!({ "ev": "switch_connect", "id": id, "uuid": uuid })));
+    mc::set_switch_sides_handler(|id, uuid| {
+        log::info!("merlin host: switch sides back from {id}");
+        emit(json!({ "ev": "switch_connect", "id": id, "uuid": uuid }))
+    });
     std::thread::spawn(|| crate::start_server(false, false));
     std::thread::spawn(|| loop {
         emit(json!({

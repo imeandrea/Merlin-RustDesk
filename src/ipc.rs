@@ -1088,6 +1088,7 @@ async fn handle(data: Data, stream: &mut Connection) {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         Data::SwitchSidesRequest(id) => {
             let uuid = uuid::Uuid::new_v4();
+            log::info!("switch sides code created for {id}");
             crate::server::insert_switch_sides_uuid(id, uuid.clone());
             #[cfg(feature = "flutter")]
             crate::hbbs_http::sync::register_switch_grant(uuid.to_string());

@@ -265,6 +265,15 @@ mod tests {
         assert_eq!(&tile[12..], &[3, 2, 1, 255, 7, 6, 5, 255]);
     }
 
+    /// Open-source hbbs has no TCP key exchange: a switch code would make RustDesk
+    /// 1.5 wait for one and time out ("Failed to secure tcp"). Merlin builds never send it.
+    #[test]
+    fn switch_code_is_not_sent_to_the_rendezvous_server() {
+        let session: Session<ViewerHandler> = Session::default();
+        session.lc.write().unwrap().initialize("merlin-test-switch-code".into(), ConnType::DEFAULT_CONN, Some("u".into()), false, None, None, None);
+        assert_eq!(session.get_switch_code(), "");
+    }
+
     #[test]
     fn login_prompts_end_the_viewer() {
         assert!(is_login_prompt("input-password"));

@@ -4912,6 +4912,10 @@ pub trait Interface: Send + Clone + 'static + Sized {
     }
 
     fn get_switch_code(&self) -> String {
+        // Merlin's servers are open-source hbbs, which has no TCP key exchange.
+        #[cfg(feature = "merlin")]
+        return String::new();
+        #[allow(unreachable_code)]
         match self.get_lch().read().unwrap().switch_uuid.clone() {
             Some(u) if !u.is_empty() => {
                 use hbb_common::sodiumoxide::crypto::hash::sha256;

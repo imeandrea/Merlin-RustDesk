@@ -3155,6 +3155,7 @@ impl Connection {
                     .unwrap()
                     .retain(|_, v| v.0.elapsed() < SWITCH_SIDES_UUID_TTL);
                 let uuid_old = SWITCH_SIDES_UUID.lock().unwrap().remove(&lr.my_id);
+                log::info!("switch sides response from {}, code pending: {}", lr.my_id, uuid_old.is_some());
                 if let Ok(uuid) = uuid::Uuid::from_slice(_s.uuid.to_vec().as_ref()) {
                     if let Some((_instant, uuid_old)) = uuid_old {
                         if uuid == uuid_old {
