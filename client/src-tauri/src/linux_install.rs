@@ -50,6 +50,12 @@ fn run_root(script: &str) -> Result<(), String> {
 
 pub fn install() -> Result<(), String> {
     let appimage = std::env::var("APPIMAGE").map_err(|_| "Si installa dall'AppImage del client".to_string())?;
+    install_from(&appimage)
+}
+
+/// Installa (o aggiorna) dall'AppImage `appimage`, con la sua personalizzazione.
+pub fn install_from(appimage: &str) -> Result<(), String> {
+    let appimage = appimage.to_owned();
     // Personalizzazione: la stessa coda dell'AppImage, aggiunta all'eseguibile installato.
     let tail_file = std::env::temp_dir().join("merlinrustdesk-brand.tail");
     let tail = crate::brand::raw_tail(Path::new(&appimage)).unwrap_or_default();

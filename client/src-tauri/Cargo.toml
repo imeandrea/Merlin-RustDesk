@@ -17,3 +17,5 @@ base64 = "0.22"
 # Nucleo RustDesk (questo repository), con l'API per il client Merlin.
 rustdesk = { path = "../..", features = ["merlin"] }
 tauri-plugin-dialog = "2"
+minisign-verify = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }

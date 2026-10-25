@@ -140,6 +140,7 @@ function MainWindow() {
           {!needsSetup && !active?.authorized && (brand.contacts.length === 0 ? <Guide /> : <Contacts />)}
         </div>
       </main>
+      {!active?.authorized && <UpdateBar />}
       {/* Richiesta di collegamento: pannello dal basso, non modale (ID e password restano visibili). */}
       {active && !active.authorized && (
         <RequestPanel client={active} onAccept={() => conn.actions.accept(active)} onReject={() => conn.actions.close(active)} />
@@ -178,6 +179,33 @@ function MainWindow() {
           void invoke("rd_install").catch(e => { setInstalling(false); toast.error(`Installazione non avviata: ${e}`) })
         }}
         onUninstall={() => { void invoke("rd_uninstall").catch(e => toast.error(`Disinstallazione non riuscita: ${e}`)) }} />
+    </div>
+  )
+}
+
+const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000
+
+/** Versione nuova del client (GitHub Releases): barra sopra il piè di pagina con «Aggiorna ora».
+ *  Nascosta durante una sessione; le versioni private compilate non la mostrano mai. */
+function UpdateBar() {
+  const [update, setUpdate] = React.useState<{ version: string; notes: string } | null>(null)
+  const [busy, setBusy] = React.useState(false)
+  React.useEffect(() => {
+    const check = () => { void invoke<{ version: string; notes: string } | null>("rd_update_check").then(setUpdate).catch(() => {}) }
+    const first = setTimeout(check, 5000)
+    const every = setInterval(check, UPDATE_EVERY_MS)
+    return () => { clearTimeout(first); clearInterval(every) }
+  }, [])
+  if (!update) return null
+  const install = () => {
+    setBusy(true)
+    invoke("rd_update_install").catch(e => { setBusy(false); toast.error("Aggiornamento non riuscito", { description: String(e) }) })
+  }
+  return (
+    <div className="bg-primary/10 text-primary flex h-10 shrink-0 items-center gap-2 border-t px-3 text-sm" role="status">
+      <ArrowBigUpDashIcon className="size-4 shrink-0" />
+      <span className="min-w-0 flex-1 truncate" title={update.notes || undefined}>Aggiornamento disponibile · <span className="font-medium tabular-nums">v{update.version}</span></span>
+      <Button size="sm" className="h-7" disabled={busy} onClick={install}>{busy ? <><Spinner /> Aggiornamento…</> : "Aggiorna ora"}</Button>
     </div>
   )
 }

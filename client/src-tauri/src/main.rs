@@ -14,6 +14,7 @@
 mod brand;
 #[cfg(target_os = "linux")]
 mod linux_install;
+mod updater;
 mod viewer;
 
 use std::sync::{Mutex, OnceLock};
@@ -153,6 +154,27 @@ async fn rd_request_assistance() -> Result<(), String> {
         return Err("Richiesta di assistenza non disponibile con questo server".into());
     }
     rd::request_assistance().await
+}
+
+/// Ultimo aggiornamento trovato (lo installa `rd_update_install`).
+static UPDATE: Mutex<Option<updater::Update>> = Mutex::new(None);
+
+/// Versione più recente disponibile: `{ version, notes }`, o null.
+#[tauri::command]
+async fn rd_update_check() -> Result<Option<Value>, String> {
+    let found = tauri::async_runtime::spawn_blocking(updater::check).await.map_err(|e| e.to_string())??;
+    let out = found.as_ref().map(|u| json!({ "version": u.version, "notes": u.notes }));
+    *UPDATE.lock().unwrap() = found;
+    Ok(out)
+}
+
+/// Scarica, verifica (firma) e installa l'aggiornamento; poi parte la versione nuova.
+#[tauri::command]
+async fn rd_update_install(app: AppHandle) -> Result<(), String> {
+    let u = UPDATE.lock().unwrap().clone().ok_or("Nessun aggiornamento da installare")?;
+    tauri::async_runtime::spawn_blocking(move || updater::install(&u)).await.map_err(|e| e.to_string())??;
+    app.exit(0);
+    Ok(())
 }
 
 #[tauri::command]
@@ -336,6 +358,9 @@ fn main() {
         None => return,
     } };
     let cm = args.first().is_some_and(|a| a == "--cm");
+    if !cm {
+        updater::cleanup();
+    }
     rd::start_status_sync();
 
     let mut builder = tauri::Builder::default();
@@ -358,7 +383,7 @@ fn main() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            rd_info, rd_brand, rd_connect, rd_cancel_assistance, rd_request_assistance, rd_server_config, rd_set_server_config, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
+            rd_info, rd_brand, rd_connect, rd_cancel_assistance, rd_update_check, rd_update_install, rd_request_assistance, rd_server_config, rd_set_server_config, rd_new_password, rd_install, rd_uninstall, rd_exit, rd_set_permanent_password, cm_backlog, cm_authorize, cm_close, cm_chat, cm_permission
         ])
         .setup(move |app| {
             // Pulsanti sotto le credenziali (finestra più alta, mai scorrimento): «Controlla un PC»
