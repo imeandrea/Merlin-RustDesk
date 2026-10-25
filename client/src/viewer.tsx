@@ -4,16 +4,25 @@
 
 import * as React from "react"
 import { Channel, invoke } from "@tauri-apps/api/core"
-import { KeyRoundIcon, MonitorIcon, XIcon } from "lucide-react"
+import { ArrowLeftRightIcon, FolderIcon, KeyRoundIcon, MessageSquareIcon, MonitorIcon, PowerIcon, XIcon } from "lucide-react"
 
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
+import { playChime } from "@/lib/chime"
+import { ChatPanel, FilesPanel, type ChatLine } from "@/viewer-panels"
 import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { cn } from "@/lib/utils"
 
-// Finestra di visione per l'inversione di ruolo: lo schermo del computer del
-// tecnico, con mouse e tastiera. Riquadri `[x y w h dw dh: u16 LE][RGBA]` da un
-// canale Tauri, input con `viewer_input` (maschere del mouse di RustDesk).
+// Finestra di visione: lo schermo di un altro computer (inversione di ruolo o
+// «Controlla un PC»), con mouse e tastiera, chat, file, inverti ruoli,
+// Ctrl+Alt+Canc e riavvio. Riquadri `[x y w h dw dh: u16 LE][RGBA]` da un canale
+// Tauri, input con `viewer_input` (maschere del mouse di RustDesk).
 
 const MOUSE_MOVE = 0, MOUSE_DOWN = 1, MOUSE_UP = 2, MOUSE_WHEEL = 3
 /** Pulsante del browser (0 sinistro, 1 centrale, 2 destro) → bit di RustDesk. */
@@ -38,6 +47,15 @@ export default function Viewer() {
   const [cursor, setCursor] = React.useState("default")
   const cursors = React.useRef(new Map<string, string>())
   const buttons = React.useRef(0)
+  const [platform, setPlatform] = React.useState("")
+  const [panel, setPanel] = React.useState<"chat" | "files" | null>(null)
+  const panelRef = React.useRef(panel); panelRef.current = panel
+  const [chat, setChat] = React.useState<ChatLine[]>([])
+  const [unread, setUnread] = React.useState(0)
+  const [confirm, setConfirm] = React.useState<"switch" | "restart" | null>(null)
+  /** Inversione chiesta da qui: la chiusura della sessione è l'altro PC che si ricollega. */
+  const switching = React.useRef(false)
+  const windows = platform.toLowerCase().includes("windows")
 
   React.useEffect(() => {
     const onTile = new Channel<ArrayBuffer>()
@@ -57,6 +75,7 @@ export default function Viewer() {
       switch (e.ev) {
         case "peer":
           setHost(String(e.hostname ?? ""))
+          setPlatform(String(e.platform ?? ""))
           setDisplays(Number(e.displays ?? 1))
           setCurrent(Number(e.currentDisplay ?? 0))
           break
@@ -64,6 +83,11 @@ export default function Viewer() {
         case "cursor": cursors.current.set(String(e.id), `url(data:image/png;base64,${e.png}) ${e.hotx} ${e.hoty}, default`); break
         case "cursor_id": setCursor(cursors.current.get(String(e.id)) ?? "default"); break
         case "need_password": setNeedPassword({ wrong: e.wrong === true }); break
+        case "chat":
+          setChat(c => [...c, { from: "peer", text: String(e.text ?? "") }])
+          if (panelRef.current !== "chat") setUnread(n => n + 1)
+          playChime()
+          break
         case "msgbox":
           if (String(e.type).includes("error")) { setStatus("ended"); setMessage(String(e.text || e.title)) }
           // Attesa dell'accettazione sul PC remoto e simili.
@@ -72,7 +96,8 @@ export default function Viewer() {
         case "switched_back": setStatus("ended"); setMessage("Il tecnico ha ripreso il controllo."); break
         case "ended":
           setStatus("ended")
-          setMessage(m => (m.startsWith("Collegamento") || m === "" ? "Visione terminata." : m))
+          setMessage(m => (switching.current ? "Ruoli invertiti: ora l'altro computer vede e controlla questo."
+            : m.startsWith("Collegamento") || m === "" ? "Visione terminata." : m))
           window.setTimeout(() => void invoke("viewer_close"), 3000)
           break
       }
@@ -108,21 +133,43 @@ export default function Viewer() {
     return () => c.removeEventListener("wheel", onWheel)
   }, [])
 
-  // Tastiera: tasti fisici (map mode) verso il computer del tecnico.
+  // Tastiera: tasti fisici (map mode) verso il PC remoto, tranne mentre si
+  // scrive nei pannelli (chat, password dei file).
   React.useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (status !== "live") return
+      if (status !== "live" || confirm) return
+      const t = e.target as HTMLElement | null
+      if (t?.closest("input, textarea, [role=dialog]")) return
       e.preventDefault()
       input({ t: "key", code: e.code, down: e.type === "keydown" })
     }
     window.addEventListener("keydown", onKey)
     window.addEventListener("keyup", onKey)
     return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("keyup", onKey) }
-  }, [status])
+  }, [status, confirm])
+
+  const togglePanel = (p: "chat" | "files") => {
+    setPanel(cur => (cur === p ? null : p))
+    if (p === "chat") setUnread(0)
+  }
+  const live = status === "live"
+  const tool = (label: string, icon: React.ReactNode, onClick: () => void, opts: { pressed?: boolean; disabled?: boolean; badge?: number } = {}) => (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button size="icon" variant={opts.pressed ? "secondary" : "ghost"} className="relative size-7" aria-label={label} aria-pressed={opts.pressed}
+          disabled={opts.disabled} onClick={onClick}>
+          {icon}
+          {!!opts.badge && <Badge className="absolute -top-1 -right-1 h-4 min-w-4 rounded-full px-1 text-[10px] tabular-nums">{opts.badge}</Badge>}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  )
 
   return (
+    <TooltipProvider>
     <div className="bg-background text-foreground flex h-screen flex-col select-none">
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b px-3">
+      <div className="flex h-10 shrink-0 items-center gap-2 border-b pr-1.5 pl-3">
         <MonitorIcon className="text-muted-foreground size-4 shrink-0" />
         <span className="truncate text-sm font-medium">Controllo remoto</span>
         {host && <span className="text-muted-foreground truncate text-xs">· {host}</span>}
@@ -131,10 +178,18 @@ export default function Viewer() {
             <Button key={i} size="sm" variant={i === current ? "secondary" : "ghost"} className="h-7 px-2 tabular-nums"
               onClick={() => input({ t: "display", display: i })}>{i + 1}</Button>
           ))}
+          {displays > 1 && <span className="bg-border mx-1 h-5 w-px" />}
+          {tool("Chat", <MessageSquareIcon />, () => togglePanel("chat"), { pressed: panel === "chat", disabled: !live, badge: unread })}
+          {tool("File", <FolderIcon />, () => togglePanel("files"), { pressed: panel === "files", disabled: !live })}
+          {tool("Inverti ruoli: l'altro computer vede e controlla questo", <ArrowLeftRightIcon />, () => setConfirm("switch"), { disabled: !live })}
+          {windows && tool("Ctrl+Alt+Canc", <span className="text-[10px] font-semibold">CAD</span>, () => input({ t: "ctrl_alt_del" }), { disabled: !live })}
+          {tool("Riavvia il PC remoto", <PowerIcon />, () => setConfirm("restart"), { disabled: !live })}
+          <span className="bg-border mx-1 h-5 w-px" />
           <Button size="sm" variant="ghost" className="h-7" onClick={() => void invoke("viewer_close")}><XIcon /> Chiudi</Button>
         </div>
       </div>
-      <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black">
+      <div className="flex min-h-0 flex-1">
+      <div className="relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden bg-black">
         <canvas ref={canvasRef} tabIndex={0} style={{ cursor }}
           className={cn("max-h-full max-w-full object-contain outline-none", status !== "live" && "invisible")}
           onContextMenu={e => e.preventDefault()}
@@ -172,6 +227,34 @@ export default function Viewer() {
           </div>
         )}
       </div>
+      {panel && (
+        <aside className="bg-background flex w-80 shrink-0 flex-col border-l">
+          {panel === "chat"
+            ? <ChatPanel lines={chat} onClose={() => setPanel(null)} onSend={text => { setChat(c => [...c, { from: "me", text }]); input({ t: "chat", text }) }} />
+            : <FilesPanel windows={windows} onClose={() => setPanel(null)} />}
+        </aside>
+      )}
+      </div>
+      <AlertDialog open={confirm !== null} onOpenChange={o => { if (!o) setConfirm(null) }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirm === "switch" ? "Invertire i ruoli?" : "Riavviare il PC remoto?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirm === "switch"
+                ? `${host || "L'altro computer"} vedrà e potrà usare questo computer; questa finestra si chiude.`
+                : `${host || "Il PC"} si riavvia subito; i programmi aperti si chiudono senza salvare.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Annulla</AlertDialogCancel>
+            <AlertDialogAction onClick={() => {
+              if (confirm === "switch") { switching.current = true; input({ t: "switch_sides" }) } else input({ t: "restart" })
+              setConfirm(null)
+            }}>{confirm === "switch" ? <><ArrowLeftRightIcon /> Inverti ruoli</> : <><PowerIcon /> Riavvia</>}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
+    </TooltipProvider>
   )
 }

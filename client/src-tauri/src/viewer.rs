@@ -11,7 +11,7 @@
 
 use std::sync::Mutex;
 
-use librustdesk::merlin_viewer::{start_viewer, ViewerHandle, ViewerTarget};
+use librustdesk::merlin_viewer::{start_files, start_viewer, FilesHandle, ViewerHandle, ViewerTarget};
 use serde_json::Value;
 use tauri::{
     ipc::{Channel, Response},
@@ -20,6 +20,10 @@ use tauri::{
 
 static HANDLE: Mutex<Option<ViewerHandle>> = Mutex::new(None);
 static TARGET: Mutex<Option<(String, ViewerTarget)>> = Mutex::new(None);
+/// PC remoto e ultima password usata: per la connessione dei file.
+static PEER: Mutex<String> = Mutex::new(String::new());
+static PASSWORD: Mutex<String> = Mutex::new(String::new());
+static FILES: Mutex<Option<FilesHandle>> = Mutex::new(None);
 
 #[tauri::command]
 fn viewer_start(on_tile: Channel<Response>, on_event: Channel<Value>) -> Result<(), String> {
@@ -54,15 +58,63 @@ fn viewer_input(input: Value) {
         "key" => h.key(s("code"), b("down"), n("locks")),
         "text" => h.text(s("text")),
         "display" => h.switch_display(n("display")),
-        "login" => h.login(s("password")),
+        "login" => {
+            *PASSWORD.lock().unwrap() = s("password").to_owned();
+            h.login(s("password"))
+        }
+        "switch_sides" => h.switch_sides(),
+        "chat" => h.chat(s("text")),
+        "ctrl_alt_del" => h.ctrl_alt_del(),
+        "restart" => h.restart(),
         _ => {}
     }
+}
+
+/// Apre la connessione dei file (con l'ultima password; senza, la chiede o il PC remoto accetta).
+#[tauri::command]
+fn viewer_files_open(on_event: Channel<Value>) {
+    let peer = PEER.lock().unwrap().clone();
+    let password = PASSWORD.lock().unwrap().clone();
+    let handle = start_files(peer, password, move |ev| {
+        let _ = on_event.send(ev);
+    });
+    if let Some(old) = FILES.lock().unwrap().replace(handle) {
+        old.close();
+    }
+}
+
+#[tauri::command]
+fn viewer_files(input: Value) {
+    let guard = FILES.lock().unwrap();
+    let Some(f) = guard.as_ref() else { return };
+    let s = |k: &str| input.get(k).and_then(|v| v.as_str()).unwrap_or("");
+    let n = |k: &str| input.get(k).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+    match s("t") {
+        "list" => f.list(s("path")),
+        "download" => f.download(n("job"), s("path"), s("to")),
+        "upload" => f.upload(n("job"), s("path"), s("to"), input.get("windows").and_then(|v| v.as_bool()).unwrap_or(false)),
+        "cancel" => f.cancel(n("job")),
+        "login" => {
+            *PASSWORD.lock().unwrap() = s("password").to_owned();
+            f.login(s("password"))
+        }
+        _ => {}
+    }
+}
+
+/// Cartella dove finiscono i file scaricati (Download dell'utente).
+#[tauri::command]
+fn viewer_download_dir(app: AppHandle) -> String {
+    app.path().download_dir().map(|p| p.to_string_lossy().to_string()).unwrap_or_default()
 }
 
 #[tauri::command]
 fn viewer_close(app: AppHandle) {
     if let Some(h) = HANDLE.lock().unwrap().take() {
         h.close();
+    }
+    if let Some(f) = FILES.lock().unwrap().take() {
+        f.close();
     }
     app.exit(0);
 }
@@ -97,6 +149,10 @@ pub fn run(title: &str, peer: String, target: ViewerTarget, context: tauri::Cont
         ViewerTarget::Switch(_) => format!("{title} — computer del tecnico ({peer})"),
         ViewerTarget::Password(_) => format!("{title} — {peer}"),
     };
+    *PEER.lock().unwrap() = peer.clone();
+    if let ViewerTarget::Password(p) = &target {
+        *PASSWORD.lock().unwrap() = p.clone();
+    }
     *TARGET.lock().unwrap() = Some((peer, target));
     tauri::Builder::default()
         .on_window_event(|w, ev| {
@@ -107,7 +163,8 @@ pub fn run(title: &str, peer: String, target: ViewerTarget, context: tauri::Cont
                 w.app_handle().exit(0);
             }
         })
-        .invoke_handler(tauri::generate_handler![viewer_start, viewer_input, viewer_close])
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![viewer_start, viewer_input, viewer_close, viewer_files_open, viewer_files, viewer_download_dir])
         .setup(move |app| {
             WebviewWindowBuilder::new(app, "viewer", WebviewUrl::App("index.html#viewer".into()))
                 .title(&title)

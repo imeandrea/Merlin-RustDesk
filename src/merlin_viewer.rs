@@ -170,7 +170,9 @@ impl InvokeUiSession for ViewerHandler {
     fn job_error(&self, _id: i32, _err: String, _file_num: i32) {}
     fn job_done(&self, _id: i32, _file_num: i32) {}
     fn clear_all_jobs(&self) {}
-    fn new_message(&self, _msg: String) {}
+    fn new_message(&self, msg: String) {
+        self.emit(json!({ "ev": "chat", "text": msg }));
+    }
     fn update_transfer_list(&self) {}
     fn load_last_job(&self, _cnt: i32, _job_json: &str, _auto_start: bool) {}
     fn update_folder_files(&self, _id: i32, _entries: &Vec<FileEntry>, _path: String, _is_local: bool, _only_count: bool) {}
@@ -246,6 +248,21 @@ impl ViewerHandle {
     pub fn switch_display(&self, display: i32) {
         self.session.switch_display(display);
     }
+    /// Swap roles: the remote computer gets to see and control this one (it
+    /// connects back to this client's server, which must be running).
+    pub fn switch_sides(&self) {
+        let session = self.session.clone();
+        std::thread::spawn(move || session.switch_sides());
+    }
+    pub fn chat(&self, text: &str) {
+        self.session.send_chat(text.to_owned());
+    }
+    pub fn ctrl_alt_del(&self) {
+        self.session.ctrl_alt_del();
+    }
+    pub fn restart(&self) {
+        self.session.restart_remote_device();
+    }
     pub fn login(&self, password: &str) {
         self.session.login(String::new(), String::new(), password.to_owned(), false);
     }
@@ -291,6 +308,186 @@ pub fn start_viewer(
     Some(ViewerHandle { session, sid: SessionID::new_v4() })
 }
 
+// ── File: second connection of type FILE_TRANSFER (RustDesk accepts file
+// actions only there). It logs in again: the password of the viewer, or the
+// remote user accepts; after switching sides the code is already used.
+
+/// Last part of a path, local or remote (`/` or `\`).
+pub fn base_name(path: &str) -> String {
+    path.trim_end_matches(['/', '\\']).rsplit(['/', '\\']).next().unwrap_or("").to_owned()
+}
+
+/// `name` inside the remote folder `dir` (Windows separator if the peer is Windows).
+pub fn remote_join(dir: &str, name: &str, windows: bool) -> String {
+    let sep = if windows { '\\' } else { '/' };
+    let dir = dir.trim_end_matches(['/', '\\']);
+    if !windows && dir.is_empty() {
+        format!("/{name}")
+    } else {
+        format!("{dir}{sep}{name}")
+    }
+}
+
+/// The file connection (one at a time; reopened if it ends).
+static FILES_SESSION: Mutex<Option<Session<FilesHandler>>> = Mutex::new(None);
+
+#[derive(Clone)]
+pub struct FilesHandler {
+    on_event: EventFn,
+}
+
+impl Default for FilesHandler {
+    fn default() -> Self {
+        Self { on_event: Arc::new(|_| {}) }
+    }
+}
+
+impl FilesHandler {
+    fn emit(&self, v: Value) {
+        (self.on_event)(v)
+    }
+}
+
+impl InvokeUiSession for FilesHandler {
+    fn set_cursor_data(&self, _cd: CursorData) {}
+    fn set_cursor_id(&self, _id: String) {}
+    fn set_cursor_position(&self, _cp: CursorPosition) {}
+    fn set_display(&self, _x: i32, _y: i32, _w: i32, _h: i32, _cursor_embedded: bool, _scale: f64) {}
+    fn switch_display(&self, _display: &SwitchDisplay) {}
+    fn set_peer_info(&self, pi: &PeerInfo) {
+        self.emit(json!({ "ev": "fs_peer", "platform": pi.platform, "home": pi.username }));
+    }
+    fn set_displays(&self, _displays: &Vec<DisplayInfo>) {}
+    fn set_platform_additions(&self, _data: &str) {}
+    fn on_connected(&self, _conn_type: ConnType) {
+        self.emit(json!({ "ev": "fs_connected" }));
+    }
+    fn update_privacy_mode(&self) {}
+    fn set_permission(&self, _name: &str, _value: bool) {}
+    fn close_success(&self) {}
+    fn update_quality_status(&self, _qs: QualityStatus) {}
+    fn set_connection_type(&self, _is_secured: bool, _direct: bool, _stream_type: &str) {}
+    fn set_fingerprint(&self, _fingerprint: String) {}
+    fn job_error(&self, id: i32, err: String, file_num: i32) {
+        self.emit(json!({ "ev": "fs_error", "job": id, "err": err, "file": file_num }));
+    }
+    fn job_done(&self, id: i32, file_num: i32) {
+        self.emit(json!({ "ev": "fs_done", "job": id, "file": file_num }));
+    }
+    fn clear_all_jobs(&self) {}
+    fn new_message(&self, _msg: String) {}
+    fn update_transfer_list(&self) {}
+    fn load_last_job(&self, _cnt: i32, _job_json: &str, _auto_start: bool) {}
+    fn update_folder_files(&self, id: i32, entries: &Vec<FileEntry>, path: String, is_local: bool, _only_count: bool) {
+        if id == 0 && !is_local {
+            let list: Vec<Value> = entries
+                .iter()
+                .map(|e| {
+                    let dir = matches!(e.entry_type.enum_value(), Ok(FileType::Dir) | Ok(FileType::DirDrive) | Ok(FileType::DirLink));
+                    json!({ "name": e.name, "dir": dir, "size": e.size, "time": e.modified_time, "hidden": e.is_hidden })
+                })
+                .collect();
+            self.emit(json!({ "ev": "fs_dir", "path": path, "entries": list }));
+        } else if id > 0 {
+            let total: u64 = entries.iter().map(|e| e.size).sum();
+            self.emit(json!({ "ev": "fs_job", "job": id, "total": total }));
+        }
+    }
+    fn confirm_delete_files(&self, _id: i32, _i: i32, _name: String) {}
+    // Existing file at the destination: overwrite (the page asks first).
+    fn override_file_confirm(&self, id: i32, file_num: i32, _to: String, is_upload: bool, _is_identical: bool) {
+        if let Some(session) = FILES_SESSION.lock().unwrap().as_ref() {
+            session.set_confirm_override_file(id, file_num, true, true, is_upload);
+        }
+    }
+    fn update_block_input_state(&self, _on: bool) {}
+    fn job_progress(&self, id: i32, file_num: i32, speed: f64, finished_size: f64) {
+        self.emit(json!({ "ev": "fs_progress", "job": id, "file": file_num, "speed": speed, "done": finished_size }));
+    }
+    fn adapt_size(&self) {}
+    fn on_rgba(&self, _display: usize, _rgba: &mut scrap::ImageRgb) {}
+    fn msgbox(&self, msgtype: &str, title: &str, text: &str, _link: &str, _retry: bool) {
+        match login_prompt_action(false, msgtype) {
+            LoginPrompt::Ask { wrong } => self.emit(json!({ "ev": "fs_need_password", "wrong": wrong })),
+            _ => self.emit(json!({ "ev": "fs_msgbox", "type": msgtype, "title": title, "text": text })),
+        }
+    }
+    fn cancel_msgbox(&self, _tag: &str) {}
+    fn switch_back(&self, _id: &str) {}
+    fn portable_service_running(&self, _running: bool) {}
+    fn on_voice_call_started(&self) {}
+    fn on_voice_call_closed(&self, _reason: &str) {}
+    fn on_voice_call_waiting(&self) {}
+    fn on_voice_call_incoming(&self) {}
+    fn get_rgba(&self, _display: usize) -> *const u8 {
+        std::ptr::null()
+    }
+    fn next_rgba(&self, _display: usize) {}
+    fn set_multiple_windows_session(&self, _sessions: Vec<WindowsSession>) {}
+    fn set_current_display(&self, _disp_idx: i32) {}
+    fn update_record_status(&self, _start: bool) {}
+    fn printer_request(&self, _id: i32, _path: String) {}
+    fn handle_screenshot_resp(&self, _sid: String, _msg: String) {}
+    fn handle_terminal_response(&self, _response: TerminalResponse) {}
+}
+
+/// Files of the remote computer (second connection).
+pub struct FilesHandle {
+    session: Session<FilesHandler>,
+}
+
+impl FilesHandle {
+    pub fn list(&self, path: &str) {
+        self.session.read_remote_dir(path.to_owned(), true);
+    }
+    /// Remote file or folder `remote` into the local folder `local_dir`.
+    pub fn download(&self, job: i32, remote: &str, local_dir: &str) {
+        let to = std::path::Path::new(local_dir).join(base_name(remote)).to_string_lossy().to_string();
+        self.session.send_files(job, 0, remote.to_owned(), to, 0, true, true);
+    }
+    /// Local file or folder `local` into the remote folder `remote_dir`.
+    pub fn upload(&self, job: i32, local: &str, remote_dir: &str, windows: bool) {
+        let to = remote_join(remote_dir, &base_name(local), windows);
+        self.session.send_files(job, 0, local.to_owned(), to, 0, true, false);
+    }
+    pub fn cancel(&self, job: i32) {
+        self.session.cancel_job(job);
+    }
+    pub fn login(&self, password: &str) {
+        self.session.login(String::new(), String::new(), password.to_owned(), false);
+    }
+    pub fn close(&self) {
+        self.session.close();
+    }
+}
+
+/// Opens the file connection to `peer_id` (empty password: asked, or accepted remotely).
+pub fn start_files(peer_id: String, password: String, on_event: impl Fn(Value) + Send + Sync + 'static) -> FilesHandle {
+    let on_event: EventFn = Arc::new(on_event);
+    let session: Session<FilesHandler> = Session {
+        password,
+        server_keyboard_enabled: Arc::new(RwLock::new(false)),
+        server_file_transfer_enabled: Arc::new(RwLock::new(true)),
+        server_clipboard_enabled: Arc::new(RwLock::new(false)),
+        reconnect_count: Arc::new(AtomicUsize::new(0)),
+        ui_handler: FilesHandler { on_event: on_event.clone() },
+        ..Default::default()
+    };
+    if let Some(old) = FILES_SESSION.lock().unwrap().replace(session.clone()) {
+        old.close();
+    }
+    session.lc.write().unwrap().initialize(peer_id, ConnType::FILE_TRANSFER, None, false, None, None, None);
+    {
+        let session = session.clone();
+        std::thread::spawn(move || {
+            let round = session.connection_round_state.lock().unwrap().new_round();
+            io_loop(session, round);
+            on_event(json!({ "ev": "fs_ended" }));
+        });
+    }
+    FilesHandle { session }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +507,17 @@ mod tests {
         let session: Session<ViewerHandler> = Session::default();
         session.lc.write().unwrap().initialize("merlin-test-switch-code".into(), ConnType::DEFAULT_CONN, Some("u".into()), false, None, None, None);
         assert_eq!(session.get_switch_code(), "");
+    }
+
+    #[test]
+    fn file_names_and_remote_paths() {
+        assert_eq!(base_name("C:\\Users\\a\\doc.txt"), "doc.txt");
+        assert_eq!(base_name("/home/a/foto.png"), "foto.png");
+        assert_eq!(base_name("/home/a/cartella/"), "cartella");
+        assert_eq!(remote_join("C:\\Users\\a", "doc.txt", true), "C:\\Users\\a\\doc.txt");
+        assert_eq!(remote_join("C:\\", "doc.txt", true), "C:\\doc.txt");
+        assert_eq!(remote_join("/home/a", "doc.txt", false), "/home/a/doc.txt");
+        assert_eq!(remote_join("/", "doc.txt", false), "/doc.txt");
     }
 
     #[test]
