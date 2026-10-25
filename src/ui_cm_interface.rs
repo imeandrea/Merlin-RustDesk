@@ -474,7 +474,7 @@ pub fn has_active_clients() -> bool {
 }
 
 #[inline]
-#[cfg(feature = "flutter")]
+#[cfg(any(feature = "flutter", feature = "merlin"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn switch_back(id: i32) {
     if let Some(client) = CLIENTS.read().unwrap().get(&id) {

@@ -312,7 +312,7 @@ pub enum DataPortableService {
     CmShowElevation(bool),
 }
 
-#[cfg(feature = "flutter")]
+#[cfg(any(feature = "flutter", feature = "merlin"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 #[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq, Eq)]
 pub enum SwitchSidesUuidAction {
@@ -390,13 +390,13 @@ pub enum Data {
     Empty,
     Disconnected,
     DataPortableService(DataPortableService),
-    #[cfg(feature = "flutter")]
+    #[cfg(any(feature = "flutter", feature = "merlin"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     SwitchSidesRequest(String),
-    #[cfg(feature = "flutter")]
+    #[cfg(any(feature = "flutter", feature = "merlin"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     SwitchSidesUuid(String, String, SwitchSidesUuidAction, Option<bool>),
-    #[cfg(feature = "flutter")]
+    #[cfg(any(feature = "flutter", feature = "merlin"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     SwitchSidesBack,
     UrlLink(String),
@@ -1084,11 +1084,12 @@ async fn handle(data: Data, stream: &mut Connection) {
             crate::rendezvous_mediator::NEEDS_DEPLOY.store(false, Ordering::SeqCst);
             crate::rendezvous_mediator::RendezvousMediator::restart();
         }
-        #[cfg(feature = "flutter")]
+        #[cfg(any(feature = "flutter", feature = "merlin"))]
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         Data::SwitchSidesRequest(id) => {
             let uuid = uuid::Uuid::new_v4();
             crate::server::insert_switch_sides_uuid(id, uuid.clone());
+            #[cfg(feature = "flutter")]
             crate::hbbs_http::sync::register_switch_grant(uuid.to_string());
             allow_err!(
                 stream
@@ -1096,7 +1097,7 @@ async fn handle(data: Data, stream: &mut Connection) {
                     .await
             );
         }
-        #[cfg(feature = "flutter")]
+        #[cfg(any(feature = "flutter", feature = "merlin"))]
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         Data::SwitchSidesUuid(uuid, id, action, None) => {
             let allowed = uuid

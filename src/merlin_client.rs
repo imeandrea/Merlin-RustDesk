@@ -240,3 +240,69 @@ pub fn set_user_server(server: &str, key: &str, relay: &str, api: &str, kind: &s
     }
     crate::ui_interface::set_options(options);
 }
+
+// ── Inversione di ruolo (switch sides) ──────────────────────────────────────
+//
+// Where RustDesk starts its Flutter UI with `--connect <id> --switch_uuid <uuid>`,
+// the `merlin` build calls `on_switch_sides_request`: Merlin's host mode registers
+// a handler that tells Merlin; the Merlin-RustDesk client opens its viewer.
+
+type SwitchSidesHandler = Box<dyn Fn(String, String) + Send + Sync>;
+static SWITCH_SIDES_HANDLER: std::sync::RwLock<Option<SwitchSidesHandler>> = std::sync::RwLock::new(None);
+
+pub fn set_switch_sides_handler(f: impl Fn(String, String) + Send + Sync + 'static) {
+    *SWITCH_SIDES_HANDLER.write().unwrap() = Some(Box::new(f));
+}
+
+/// The peer asked to switch sides (code already registered as pending).
+pub fn on_switch_sides_request(peer_id: &str, uuid: &str) {
+    if let Some(f) = SWITCH_SIDES_HANDLER.read().unwrap().as_ref() {
+        return f(peer_id.to_owned(), uuid.to_owned());
+    }
+    open_switch_viewer(peer_id, uuid);
+}
+
+pub fn switch_viewer_args(peer_id: &str, uuid: &str) -> Vec<String> {
+    vec!["--merlin-view".to_owned(), peer_id.to_owned(), "--switch_uuid".to_owned(), uuid.to_owned()]
+}
+
+/// Viewer of the client, as the logged-in user (never as the service's SYSTEM/root).
+fn open_switch_viewer(peer_id: &str, uuid: &str) {
+    let args = switch_viewer_args(peer_id, uuid);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let res = if crate::platform::is_root() {
+        #[cfg(target_os = "linux")]
+        let r = crate::platform::run_as_user(args, None, None::<(&str, &str)>).map(|_| ()).map_err(|e| e.to_string());
+        #[cfg(not(target_os = "linux"))]
+        let r = crate::platform::run_as_user(args).map(|_| ()).map_err(|e| e.to_string());
+        r
+    } else {
+        crate::run_me(args).map(|_| ()).map_err(|e| e.to_string())
+    };
+    if let Err(e) = res {
+        hbb_common::log::error!("merlin: viewer for switch sides not started: {e}");
+    }
+}
+
+pub fn cm_switch_back(id: i32) {
+    crate::ui_cm_interface::switch_back(id)
+}
+
+#[cfg(test)]
+mod switch_sides_tests {
+    use super::*;
+
+    #[test]
+    fn viewer_args_carry_peer_and_code() {
+        assert_eq!(switch_viewer_args("123456789", "u-1"), vec!["--merlin-view", "123456789", "--switch_uuid", "u-1"]);
+    }
+
+    #[test]
+    fn handler_receives_request() {
+        let got: Arc<std::sync::Mutex<Vec<(String, String)>>> = Default::default();
+        let sink = got.clone();
+        set_switch_sides_handler(move |peer, uuid| sink.lock().unwrap().push((peer, uuid)));
+        on_switch_sides_request("42", "u");
+        assert_eq!(*got.lock().unwrap(), vec![("42".to_owned(), "u".to_owned())]);
+    }
+}

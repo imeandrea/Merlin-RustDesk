@@ -2244,7 +2244,7 @@ impl<T: InvokeUiSession> Remote<T> {
                             );
                         }
                     }
-                    #[cfg(feature = "flutter")]
+                    #[cfg(any(feature = "flutter", feature = "merlin"))]
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
                     Some(misc::Union::SwitchBack(_)) => {
                         let allow_switch_back = self

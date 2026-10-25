@@ -2866,7 +2866,7 @@ pub struct LoginConfigHandler {
     pub direct: Option<bool>,
     pub received: bool,
     switch_uuid: Option<String>,
-    #[cfg(feature = "flutter")]
+    #[cfg(any(feature = "flutter", feature = "merlin"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     switch_back_allowed: bool,
     pub save_ab_password_to_recent: bool, // true: connected with ab password
@@ -2992,7 +2992,7 @@ impl LoginConfigHandler {
 
         self.direct = None;
         self.received = false;
-        #[cfg(feature = "flutter")]
+        #[cfg(any(feature = "flutter", feature = "merlin"))]
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             self.switch_back_allowed = false;
@@ -3010,13 +3010,13 @@ impl LoginConfigHandler {
         self.is_terminal_admin = is_terminal_admin;
     }
 
-    #[cfg(feature = "flutter")]
+    #[cfg(any(feature = "flutter", feature = "merlin"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn allow_switch_back_once(&mut self) {
         self.switch_back_allowed = true;
     }
 
-    #[cfg(feature = "flutter")]
+    #[cfg(any(feature = "flutter", feature = "merlin"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn consume_switch_back_permission(&mut self) -> bool {
         if self.switch_back_allowed {
@@ -4548,7 +4548,7 @@ pub fn handle_login_error(
 
 // "Switch sides" requires the incoming-only client to connect back to its
 // controlling peer; verify the local pending uuid before opening the connection.
-#[cfg(feature = "flutter")]
+#[cfg(any(feature = "flutter", feature = "merlin"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn is_switch_sides_back(conn_type: ConnType, interface: &impl Interface) -> bool {
     if conn_type != ConnType::DEFAULT_CONN {
@@ -4583,12 +4583,12 @@ async fn is_switch_sides_back(conn_type: ConnType, interface: &impl Interface) -
     lc.id == id && current_uuid.as_ref() == Some(&uuid)
 }
 
-#[cfg(not(all(feature = "flutter", not(any(target_os = "android", target_os = "ios")))))]
+#[cfg(not(all(any(feature = "flutter", feature = "merlin"), not(any(target_os = "android", target_os = "ios")))))]
 async fn is_switch_sides_back(_conn_type: ConnType, _interface: &impl Interface) -> bool {
     false
 }
 
-#[cfg(feature = "flutter")]
+#[cfg(any(feature = "flutter", feature = "merlin"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn request_local_switch_sides_uuid(
     id: &str,
@@ -4644,7 +4644,7 @@ pub async fn handle_hash(
     // Take care of password application order
 
     // switch_uuid
-    #[cfg(feature = "flutter")]
+    #[cfg(any(feature = "flutter", feature = "merlin"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         let uuid = lc.write().unwrap().switch_uuid.take();

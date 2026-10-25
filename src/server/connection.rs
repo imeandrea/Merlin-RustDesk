@@ -198,11 +198,11 @@ lazy_static::lazy_static! {
     static ref WAKELOCK_KEEP_AWAKE_OPTION: Arc::<Mutex<Option<bool>>> = Default::default();
 }
 
-#[cfg(feature = "flutter")]
+#[cfg(any(feature = "flutter", feature = "merlin"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 const SWITCH_SIDES_UUID_TTL: Duration = Duration::from_secs(10);
 
-#[cfg(feature = "flutter")]
+#[cfg(any(feature = "flutter", feature = "merlin"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 lazy_static::lazy_static! {
     static ref SWITCH_SIDES_UUID: Arc::<Mutex<HashMap<String, (Instant, uuid::Uuid)>>> = Default::default();
@@ -965,7 +965,7 @@ impl Connection {
                                 log::error!("Failed to start portable service from cm: {:?}", e);
                             }
                         }
-                        #[cfg(feature = "flutter")]
+                        #[cfg(any(feature = "flutter", feature = "merlin"))]
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         ipc::Data::SwitchSidesBack => {
                             let mut misc = Misc::new();
@@ -3147,7 +3147,7 @@ impl Connection {
                 }
             }
         } else if let Some(message::Union::SwitchSidesResponse(_s)) = msg.union {
-            #[cfg(feature = "flutter")]
+            #[cfg(any(feature = "flutter", feature = "merlin"))]
             #[cfg(not(any(target_os = "android", target_os = "ios")))]
             if let Some(lr) = _s.lr.clone().take() {
                 SWITCH_SIDES_UUID
@@ -3977,7 +3977,7 @@ impl Connection {
                                 .map(|a| allow_err!(a.send(MediaData::AudioFormat(format))));
                         }
                     }
-                    #[cfg(feature = "flutter")]
+                    #[cfg(any(feature = "flutter", feature = "merlin"))]
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
                     Some(misc::Union::SwitchSidesRequest(s)) => {
                         if let Ok(uuid) = uuid::Uuid::from_slice(&s.uuid.to_vec()[..]) {
@@ -3985,6 +3985,7 @@ impl Connection {
                                 self.lr.my_id.clone(),
                                 uuid.clone(),
                             ) {
+                                #[cfg(feature = "flutter")]
                                 crate::run_me(vec![
                                     "--connect",
                                     &self.lr.my_id,
@@ -3992,6 +3993,8 @@ impl Connection {
                                     uuid.to_string().as_ref(),
                                 ])
                                 .ok();
+                                #[cfg(all(feature = "merlin", not(feature = "flutter")))]
+                                crate::merlin_client::on_switch_sides_request(&self.lr.my_id, &uuid.to_string());
                             }
                             self.on_close("switch sides", false).await;
                             return false;
@@ -6311,7 +6314,7 @@ impl Connection {
     }
 }
 
-#[cfg(feature = "flutter")]
+#[cfg(any(feature = "flutter", feature = "merlin"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn insert_switch_sides_uuid(id: String, uuid: uuid::Uuid) {
     SWITCH_SIDES_UUID
@@ -6320,7 +6323,7 @@ pub fn insert_switch_sides_uuid(id: String, uuid: uuid::Uuid) {
         .insert(id, (tokio::time::Instant::now(), uuid));
 }
 
-#[cfg(feature = "flutter")]
+#[cfg(any(feature = "flutter", feature = "merlin"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn insert_pending_switch_sides_uuid(id: String, uuid: uuid::Uuid) -> bool {
     let mut uuids = PENDING_SWITCH_SIDES_UUID.lock().unwrap();
@@ -6332,7 +6335,7 @@ pub fn insert_pending_switch_sides_uuid(id: String, uuid: uuid::Uuid) -> bool {
     true
 }
 
-#[cfg(feature = "flutter")]
+#[cfg(any(feature = "flutter", feature = "merlin"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn has_pending_switch_sides_uuid(id: &str, uuid: &uuid::Uuid) -> bool {
     let mut uuids = PENDING_SWITCH_SIDES_UUID.lock().unwrap();
@@ -6343,7 +6346,7 @@ pub fn has_pending_switch_sides_uuid(id: &str, uuid: &uuid::Uuid) -> bool {
         == Some(true)
 }
 
-#[cfg(feature = "flutter")]
+#[cfg(any(feature = "flutter", feature = "merlin"))]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub fn claim_pending_switch_sides_uuid(id: &str, uuid: &uuid::Uuid) -> bool {
     let mut uuids = PENDING_SWITCH_SIDES_UUID.lock().unwrap();
@@ -7313,7 +7316,7 @@ mod test {
         assert_eq!(unauthorized_count(), 0);
     }
 
-    #[cfg(feature = "flutter")]
+    #[cfg(any(feature = "flutter", feature = "merlin"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     #[test]
     fn test_pending_switch_sides_uuid_is_claimed_once() {

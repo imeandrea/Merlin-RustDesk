@@ -1512,10 +1512,10 @@ impl<T: InvokeUiSession> Session<T> {
         self.send(Data::ElevateWithLogon(username, password));
     }
 
-    #[cfg(any(target_os = "android", target_os = "ios", not(feature = "flutter")))]
+    #[cfg(any(target_os = "android", target_os = "ios", not(any(feature = "flutter", feature = "merlin"))))]
     pub fn switch_sides(&self) {}
 
-    #[cfg(feature = "flutter")]
+    #[cfg(any(feature = "flutter", feature = "merlin"))]
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     #[tokio::main(flavor = "current_thread")]
     pub async fn switch_sides(&self) {
