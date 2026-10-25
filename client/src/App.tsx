@@ -17,6 +17,7 @@ import logo from "@/assets/logo.png"
 import { brand, type ContactKind } from "@/lib/brand"
 import { AboutDialog } from "@/about"
 import { cn } from "@/lib/utils"
+import { playChime } from "@/lib/chime"
 import { getTheme, setTheme, type ThemeChoice } from "@/lib/theme"
 import { Button } from "@/components/ui/button"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
@@ -507,7 +508,8 @@ function useConnections() {
   const seen = React.useRef(false)
 
   React.useEffect(() => {
-    const apply = (ev: Record<string, unknown>) => {
+    /** `live`: evento appena arrivato (i messaggi recuperati all'apertura non suonano). */
+    const apply = (ev: Record<string, unknown>, live = false) => {
       const seq = Number(ev.seq ?? 0)
       if (seq && seq <= lastSeq.current) return
       if (seq) lastSeq.current = seq
@@ -521,11 +523,12 @@ function useConnections() {
       } else if (ev.ev === "chat") {
         const id = ev.id as number
         setChat(m => ({ ...m, [id]: [...(m[id] ?? []), { from: "tech", text: String(ev.text), at: Date.now() }] }))
+        if (live) playChime()
       }
     }
     let alive = true
-    const un = listen<Record<string, unknown>>("cm", e => apply(e.payload))
-    void un.then(() => invoke<Array<Record<string, unknown>>>("cm_backlog")).then(list => { if (alive) list.forEach(apply) })
+    const un = listen<Record<string, unknown>>("cm", e => apply(e.payload, true))
+    void un.then(() => invoke<Array<Record<string, unknown>>>("cm_backlog")).then(list => { if (alive) list.forEach(ev => apply(ev)) })
     return () => { alive = false; void un.then(f => f()) }
   }, [])
 
