@@ -1224,6 +1224,11 @@ pub fn get_api_server(api: String, custom: String) -> String {
     if Config::no_register_device() {
         return "".to_owned();
     }
+    // Merlin: da ospite nella federazione si usa l'API del server ospitante.
+    #[cfg(feature = "merlin")]
+    if let Some(api) = crate::merlin_federazione::api_sovrascritta() {
+        return api;
+    }
     let mut res = get_api_server_(api, custom);
     if res.ends_with('/') {
         res.pop();
@@ -2124,6 +2129,11 @@ pub async fn get_key(sync: bool) -> String {
         let mut options = crate::ipc::get_options_async().await;
         options.remove("key").unwrap_or_default()
     };
+    // Merlin: da ospite nella federazione si usa la chiave del server ospitante.
+    #[cfg(feature = "merlin")]
+    {
+        key = crate::merlin_federazione::gancio_chiave(key);
+    }
     if key.is_empty() {
         key = config::RS_PUB_KEY.to_owned();
     }

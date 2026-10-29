@@ -177,6 +177,9 @@ async fn start_hbbs_sync_async() {
                     if !note.is_empty() {
                         v[keys::OPTION_PRESET_NOTE] = json!(note);
                     }
+                    // Merlin (R6): anche il sysinfo è firmato con la chiave del dispositivo.
+                    #[cfg(feature = "merlin")]
+                    crate::merlin_federazione::aggiungi_firma(&mut v);
                     let v = v.to_string();
                     let mut hash = "".to_owned();
                     if crate::is_public(&url) {
@@ -210,6 +213,8 @@ async fn start_hbbs_sync_async() {
                     }
                     match crate::post_request(url.replace("heartbeat", "sysinfo"), v, "").await {
                         Ok(x)  => {
+                            #[cfg(feature = "merlin")]
+                            crate::merlin_federazione::gestisci_risposta(&x).await;
                             if x == "SYSINFO_UPDATED" {
                                 info_uploaded = InfoUploaded::uploaded(url.clone(), id.clone(), sys_username);
                                 log::info!("sysinfo updated");
@@ -242,11 +247,16 @@ async fn start_hbbs_sync_async() {
                 }
                 let modified_at = LocalConfig::get_option("strategy_timestamp").parse::<i64>().unwrap_or(0);
                 v["modified_at"] = json!(modified_at);
+                // Merlin (D1): heartbeat firmato con la chiave del dispositivo.
+                #[cfg(feature = "merlin")]
+                crate::merlin_federazione::aggiungi_firma(&mut v);
                 let response = crate::post_request(url.clone(), v.to_string(), "").await;
                 if let Err(err) = &response {
                     hbb_common::throttled_log!(API_LOG_INTERVAL, warn, "Heartbeat failed: {err:?}");
                 }
                 if let Ok(s) = response {
+                    #[cfg(feature = "merlin")]
+                    crate::merlin_federazione::gestisci_risposta(&s).await;
                     if let Ok(mut rsp) = serde_json::from_str::<HashMap::<&str, Value>>(&s) {
                         if rsp.remove("sysinfo").is_some() {
                             info_uploaded.uploaded = false;

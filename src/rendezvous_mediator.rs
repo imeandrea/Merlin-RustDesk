@@ -279,6 +279,8 @@ impl RendezvousMediator {
             }
         }
         crate::hbbs_http::sync::start();
+        #[cfg(feature = "merlin")]
+        crate::merlin_federazione::avvia();
         #[cfg(target_os = "windows")]
         if crate::platform::is_installed() && crate::is_server() {
             crate::updater::start_auto_update();
@@ -1273,6 +1275,19 @@ impl RendezvousMediator {
         Ok(())
     }
 
+    // Merlin (D10): l'ID non si cambia da solo; lo cambia solo la federazione.
+    #[cfg(feature = "merlin")]
+    async fn handle_uuid_mismatch(&mut self, _socket: Sink<'_>) -> ResultType<()> {
+        let mut solving = SOLVING_PK_MISMATCH.lock().await;
+        if solving.is_empty() || *solving == self.host {
+            Config::set_key_confirmed(false);
+            *solving = self.host.clone();
+            crate::merlin_federazione::su_uuid_mismatch(&self.host);
+        }
+        Ok(())
+    }
+
+    #[cfg(not(feature = "merlin"))]
     async fn handle_uuid_mismatch(&mut self, socket: Sink<'_>) -> ResultType<()> {
         {
             let mut solving = SOLVING_PK_MISMATCH.lock().await;
@@ -1320,6 +1335,11 @@ impl RendezvousMediator {
 
     fn get_relay_server(&self, provided_by_rendezvous_server: String) -> String {
         let mut relay_server = Config::get_option("relay-server");
+        // Merlin: da ospite nella federazione si usa il relay del server ospitante.
+        #[cfg(feature = "merlin")]
+        {
+            relay_server = crate::merlin_federazione::gancio_relay(relay_server);
+        }
         if relay_server.is_empty() {
             relay_server = provided_by_rendezvous_server;
         }
