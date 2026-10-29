@@ -36,7 +36,7 @@ use hbb_common::{
 };
 
 use crate::{
-    hbbs_http::{create_http_client_async, get_url_for_tls},
+    hbbs_http::{create_http_client_async, create_http_client_async_cached, get_url_for_tls},
     ui_interface::{get_api_server as ui_get_api_server, get_option, set_option},
 };
 
@@ -1718,7 +1718,7 @@ async fn post_request_(
     danger_accept_invalid_cert: Option<bool>,
     original_danger_accept_invalid_cert: Option<bool>,
 ) -> ResultType<reqwest::Response> {
-    let mut req = create_http_client_async(
+    let mut req = create_http_client_async_cached(
         tls_type.unwrap_or(TlsType::Rustls),
         danger_accept_invalid_cert.unwrap_or(false),
     )
