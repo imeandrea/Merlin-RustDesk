@@ -192,18 +192,18 @@ pub fn applica_scelta(stato: &mut Stato, elenco: &Elenco, api: &str) -> Option<O
 /// Cosa fare della risposta a un heartbeat o a un sysinfo.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Risposta {
-    /// `Some(Some(e))`: salva l'elenco; `Some(None)`: il server di casa non è
-    /// (più) federato, l'elenco si cancella; `None`: non toccare l'elenco.
-    pub elenco: Option<Option<Elenco>>,
+    /// Elenco nuovo da salvare; `None`: l'elenco salvato resta com'è (R10).
+    pub elenco: Option<Elenco>,
     /// ID nuovo assegnato dal server (D6).
     pub change_id: Option<String>,
 }
 
-/// Interpreta la risposta. Da ospite l'elenco non si salva: il suo `home` è il
-/// server ospitante, non casa. Le risposte d'errore (`error`) non toccano niente.
+/// Interpreta la risposta. Da ospite non si prende niente: il `home` dell'elenco
+/// è il server ospitante e il cambio di ID lo dà solo casa (D6). Le risposte
+/// d'errore (`error`) non toccano niente.
 pub fn interpreta(v: &Value, ospite: bool) -> Risposta {
     let Some(o) = v.as_object() else { return Risposta::default() };
-    if o.contains_key("error") {
+    if ospite || o.contains_key("error") {
         return Risposta::default();
     }
     let change_id = v
@@ -212,13 +212,7 @@ pub fn interpreta(v: &Value, ospite: bool) -> Risposta {
         .and_then(Value::as_str)
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty());
-    let elenco = if ospite || change_id.is_some() {
-        None
-    } else if v.get("merlin").and_then(|m| m.get("federation")).is_some() {
-        da_risposta(v).map(Some)
-    } else {
-        Some(None)
-    };
+    let elenco = if change_id.is_some() { None } else { da_risposta(v) };
     Risposta { elenco, change_id }
 }
 
@@ -301,6 +295,8 @@ pub fn server_attivo() -> Option<ServerFed> {
 /// Imposta (o toglie) la sovrascrittura, compresa quella dell'hbbs in
 /// `EXE_RENDEZVOUS_SERVER`. Le opzioni salvate non si toccano.
 pub fn imposta_sovrascrittura(s: Option<ServerFed>) {
+    // Hbbs e chiave/relay/API cambiano insieme, sotto lo stesso lock.
+    let mut attivo = SOVRASCRITTURA.write().unwrap();
     {
         let mut exe = config::EXE_RENDEZVOUS_SERVER.write().unwrap();
         let mut orig = EXE_ORIGINALE.lock().unwrap();
@@ -318,12 +314,13 @@ pub fn imposta_sovrascrittura(s: Option<ServerFed>) {
             }
         }
     }
-    *SOVRASCRITTURA.write().unwrap() = s;
+    *attivo = s;
 }
 
-/// Gancio di `get_key`: la chiave dell'ospitante (anche vuota: allora vale quella di serie).
-pub fn gancio_chiave(chiave: String) -> String {
-    server_attivo().map(|s| s.key).unwrap_or(chiave)
+/// Gancio di `get_key`: la chiave dell'ospitante (vuota: quella di serie), prima
+/// anche della licenza nel nome dell'eseguibile.
+pub fn chiave_sovrascritta() -> Option<String> {
+    server_attivo().map(|s| if s.key.is_empty() { config::RS_PUB_KEY.to_owned() } else { s.key })
 }
 
 /// Gancio di `get_relay_server`: il relay dell'ospitante (anche vuoto: allora
@@ -340,7 +337,15 @@ pub fn api_sovrascritta() -> Option<String> {
 /// `host` con la porta di serie dell'hbbs se manca.
 pub fn con_porta(host: &str) -> String {
     let h = host.trim();
-    if h.contains(':') {
+    if h.starts_with('[') {
+        if h.contains("]:") {
+            h.to_owned()
+        } else {
+            format!("{h}:{PORTA_HBBS}")
+        }
+    } else if h.matches(':').count() > 1 {
+        format!("[{h}]:{PORTA_HBBS}")
+    } else if h.contains(':') {
         h.to_owned()
     } else {
         format!("{h}:{PORTA_HBBS}")
@@ -369,35 +374,40 @@ fn elenco_salvato() -> Option<Elenco> {
 
 /// Gestisce la risposta a un heartbeat o a un sysinfo: elenco della federazione
 /// e `change_id` (D3, D10).
-pub async fn gestisci_risposta(corpo: &str) {
+pub fn gestisci_risposta(corpo: &str) {
     let Ok(v) = serde_json::from_str::<Value>(corpo) else { return };
     let r = interpreta(&v, server_attivo().is_some());
-    match r.elenco {
-        Some(Some(e)) => match serde_json::to_string(&e) {
+    if let Some(e) = r.elenco {
+        match serde_json::to_string(&e) {
             Ok(s) if s != Config::get_option(OPZIONE_ELENCO) => {
                 log::info!("federazione: elenco aggiornato ({} server)", e.servers.len());
                 Config::set_option(OPZIONE_ELENCO.to_owned(), s);
             }
             Ok(_) => {}
             Err(e) => log::error!("federazione: elenco non salvato: {e}"),
-        },
-        Some(None) => {
-            if !Config::get_option(OPZIONE_ELENCO).is_empty() {
-                log::info!("federazione: il server di casa non è più federato");
-                Config::set_option(OPZIONE_ELENCO.to_owned(), String::new());
-            }
         }
-        None => {}
     }
     if let Some(id) = r.change_id {
-        cambia_id(id).await;
+        cambia_id(id);
     }
 }
 
-/// D10: ID nuovo indicato dalla federazione, applicato come il cambio di ID
-/// dell'utente (IPC `set_config("id")`), poi riavvio del mediatore.
-async fn cambia_id(id: String) {
-    if !hbb_common::is_valid_custom_id(&id) {
+/// ID assegnato dal server (D6): 9 cifre, al massimo 10 come gli ID RustDesk.
+/// Non `is_valid_custom_id`, che vuole una lettera in testa.
+pub fn id_valido(id: &str) -> bool {
+    (9..=10).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// D10: ID nuovo indicato dalla federazione, poi riavvio del mediatore.
+///
+/// Si applica qui come fa il gestore IPC di `set_config("id")`, senza passare
+/// dall'IPC: heartbeat e controllo girano nel processo di `start_server(true)`,
+/// che è anche il server IPC `""` padrone della configurazione (utente su macOS
+/// e Linux, SYSTEM su Windows). Mandarsi un messaggio IPC farebbe le stesse due
+/// chiamate; la sincronizzazione esistente porta poi la configurazione al
+/// servizio root (macOS/Linux) e l'interfaccia legge l'ID via IPC da qui.
+fn cambia_id(id: String) {
+    if !id_valido(&id) {
         log::error!("federazione: ID nuovo dal server non valido: {id:?}");
         return;
     }
@@ -406,11 +416,8 @@ async fn cambia_id(id: String) {
         return;
     }
     log::info!("federazione: il server ha cambiato l'ID {vecchio} in {id}");
-    if let Err(e) = crate::ipc::set_config_async("id", id.clone()).await {
-        log::error!("federazione: cambio di ID via IPC non riuscito ({e}), lo applico qui");
-        Config::set_key_confirmed(false);
-        Config::set_id(&id);
-    }
+    Config::set_key_confirmed(false);
+    Config::set_id(&id);
     crate::rendezvous_mediator::RendezvousMediator::restart();
 }
 
@@ -435,18 +442,25 @@ const GIRI_PER_CASA: u32 = 3;
 /// Timeout della connessione di prova all'hbbs.
 const TIMEOUT_PROVA: Duration = Duration::from_secs(5);
 
-/// Connessione TCP di prova all'hbbs `host[:porta]`.
+/// Connessione TCP di prova all'hbbs `host[:porta]`, risoluzione DNS compresa,
+/// entro `TIMEOUT_PROVA` in tutto.
 fn prova(hbbs: &str) -> Esito {
-    let indirizzi = match con_porta(hbbs).to_socket_addrs() {
-        Ok(a) => a.collect::<Vec<_>>(),
-        Err(_) => return Esito::Fallito,
-    };
-    for a in indirizzi {
-        if TcpStream::connect_timeout(&a, TIMEOUT_PROVA).is_ok() {
-            return Esito::Ok;
-        }
+    let fine = Instant::now() + TIMEOUT_PROVA;
+    let (tx, rx) = mpsc::channel();
+    let indirizzo = con_porta(hbbs);
+    std::thread::spawn(move || {
+        let ok = indirizzo.to_socket_addrs().map_or(false, |mut a| {
+            a.any(|a| {
+                let resto = fine.saturating_duration_since(Instant::now());
+                !resto.is_zero() && TcpStream::connect_timeout(&a, resto).is_ok()
+            })
+        });
+        let _ = tx.send(ok);
+    });
+    match rx.recv_timeout(TIMEOUT_PROVA) {
+        Ok(true) => Esito::Ok,
+        _ => Esito::Fallito,
     }
-    Esito::Fallito
 }
 
 /// Prova i server in parallelo; le risposte arrivano nell'ordine di completamento.
@@ -459,7 +473,7 @@ fn prova_in_parallelo(server: &[ServerFed]) -> Vec<(String, bool)> {
         });
     }
     drop(tx);
-    let fine = Instant::now() + TIMEOUT_PROVA + Duration::from_secs(2);
+    let fine = Instant::now() + TIMEOUT_PROVA + Duration::from_secs(1);
     let mut risposte = Vec::new();
     while risposte.len() < server.len() {
         let resto = fine.saturating_duration_since(Instant::now());
@@ -471,10 +485,17 @@ fn prova_in_parallelo(server: &[ServerFed]) -> Vec<(String, bool)> {
     risposte
 }
 
-fn hbbs_casa(elenco: &Elenco) -> String {
-    let opz = Config::get_option("custom-rendezvous-server");
-    if !opz.trim().is_empty() {
-        return opz;
+/// L'hbbs di casa come lo sceglie il mediatore: `EXE_RENDEZVOUS_SERVER` di
+/// prima della sovrascrittura (licenza), poi `custom` (l'opzione
+/// `custom-rendezvous-server`), poi l'hbbs di casa dell'elenco.
+fn hbbs_casa_con(custom: &str, elenco: &Elenco) -> String {
+    let originale = EXE_ORIGINALE.lock().unwrap().clone();
+    let exe = originale.unwrap_or_else(|| config::EXE_RENDEZVOUS_SERVER.read().unwrap().clone());
+    if !exe.trim().is_empty() {
+        return exe;
+    }
+    if !custom.trim().is_empty() {
+        return custom.to_owned();
     }
     elenco
         .servers
@@ -482,6 +503,10 @@ fn hbbs_casa(elenco: &Elenco) -> String {
         .find(|s| norma(&s.api) == norma(&elenco.home))
         .map(|s| s.hbbs.clone())
         .unwrap_or_default()
+}
+
+fn hbbs_casa(elenco: &Elenco) -> String {
+    hbbs_casa_con(&Config::get_option("custom-rendezvous-server"), elenco)
 }
 
 fn prova_altri(elenco: &Elenco) {
@@ -687,41 +712,69 @@ mod tests {
         assert!(firma_con(&[1, 2], &pk.0, "1", "u", 1).is_none());
     }
 
-    #[test]
-    fn ganci_senza_sovrascrittura_come_prima() {
+    /// Esegue `f` con `EXE_RENDEZVOUS_SERVER` impostato a `exe`, poi lo ripristina.
+    fn con_exe(exe: &str, f: impl FnOnce()) {
         let _g = TEST_GANCI.lock().unwrap();
         imposta_sovrascrittura(None);
-        assert_eq!(server_attivo(), None);
-        assert_eq!(gancio_chiave("K".into()), "K");
-        assert_eq!(gancio_relay("r:21117".into()), "r:21117");
-        assert_eq!(gancio_relay("".into()), "");
-        assert_eq!(api_sovrascritta(), None);
-        assert_eq!(*hbb_common::config::EXE_RENDEZVOUS_SERVER.read().unwrap(), "");
+        let prima = std::mem::replace(&mut *hbb_common::config::EXE_RENDEZVOUS_SERVER.write().unwrap(), exe.into());
+        f();
+        imposta_sovrascrittura(None);
+        *hbb_common::config::EXE_RENDEZVOUS_SERVER.write().unwrap() = prima;
+    }
+
+    #[test]
+    fn ganci_senza_sovrascrittura_come_prima() {
+        con_exe("lic:21116", || {
+            assert_eq!(server_attivo(), None);
+            assert_eq!(chiave_sovrascritta(), None);
+            assert_eq!(gancio_relay("r:21117".into()), "r:21117");
+            assert_eq!(gancio_relay("".into()), "");
+            assert_eq!(api_sovrascritta(), None);
+            assert_eq!(*hbb_common::config::EXE_RENDEZVOUS_SERVER.read().unwrap(), "lic:21116");
+        });
     }
 
     #[test]
     fn ganci_con_sovrascrittura_usano_il_server_ospitante() {
-        let _g = TEST_GANCI.lock().unwrap();
-        let b = srv("b");
-        imposta_sovrascrittura(Some(b.clone()));
-        assert_eq!(server_attivo(), Some(b.clone()));
-        assert_eq!(gancio_chiave("K".into()), "Kb");
-        assert_eq!(gancio_relay("a:21117".into()), "b:21117");
-        assert_eq!(api_sovrascritta(), Some("https://b".into()));
-        assert_eq!(hbb_common::config::Config::get_rendezvous_servers(), vec!["b:21116".to_string()]);
-        // Ritorno a casa: valori di prima.
-        imposta_sovrascrittura(None);
-        assert_eq!(server_attivo(), None);
-        assert_eq!(gancio_chiave("K".into()), "K");
-        assert_eq!(*hbb_common::config::EXE_RENDEZVOUS_SERVER.read().unwrap(), "");
-        // Chiave e relay vuoti dell'ospite: si usano i valori di serie, non quelli di casa.
-        let mut c = srv("c");
-        c.relay.clear();
-        c.key.clear();
-        imposta_sovrascrittura(Some(c));
-        assert_eq!(gancio_chiave("K".into()), "");
-        assert_eq!(gancio_relay("a:21117".into()), "");
-        imposta_sovrascrittura(None);
+        con_exe("lic:21116", || {
+            let b = srv("b");
+            imposta_sovrascrittura(Some(b.clone()));
+            assert_eq!(server_attivo(), Some(b.clone()));
+            assert_eq!(chiave_sovrascritta().as_deref(), Some("Kb"));
+            assert_eq!(gancio_relay("a:21117".into()), "b:21117");
+            assert_eq!(api_sovrascritta(), Some("https://b".into()));
+            assert_eq!(hbb_common::config::Config::get_rendezvous_servers(), vec!["b:21116".to_string()]);
+            // Casa per le prove: l'hbbs che il mediatore usava prima della sovrascrittura.
+            assert_eq!(hbbs_casa_con("custom:21116", &elenco()), "lic:21116");
+            // Da un ospite all'altro e poi a casa: si ripristina il valore di prima.
+            imposta_sovrascrittura(Some(srv("c")));
+            imposta_sovrascrittura(None);
+            assert_eq!(server_attivo(), None);
+            assert_eq!(chiave_sovrascritta(), None);
+            assert_eq!(*hbb_common::config::EXE_RENDEZVOUS_SERVER.read().unwrap(), "lic:21116");
+            // Chiave e relay vuoti dell'ospite: valori di serie, non quelli di casa.
+            let mut c = srv("c");
+            c.relay.clear();
+            c.key.clear();
+            imposta_sovrascrittura(Some(c));
+            assert_eq!(chiave_sovrascritta().as_deref(), Some(hbb_common::config::RS_PUB_KEY));
+            assert_eq!(gancio_relay("a:21117".into()), "");
+        });
+        con_exe("", || {
+            assert_eq!(hbbs_casa_con("custom:21116", &elenco()), "custom:21116");
+            assert_eq!(hbbs_casa_con("", &elenco()), "a:21116");
+        });
+    }
+
+    #[test]
+    fn id_dal_server_valido() {
+        assert!(id_valido("123456789"));
+        assert!(id_valido("1234567890"));
+        assert!(!id_valido("12345678"));
+        assert!(!id_valido("12345678901"));
+        assert!(!id_valido("a23456789"));
+        assert!(!id_valido("12345 789"));
+        assert!(!id_valido(""));
     }
 
     #[test]
@@ -763,16 +816,17 @@ mod tests {
     #[test]
     fn risposta_heartbeat_interpretata() {
         let fed = json!({"merlin": {"federation": {"home": "https://a", "servers": []}}});
-        assert_eq!(interpreta(&fed, false).elenco, Some(Some(Elenco { home: "https://a".into(), servers: vec![] })));
+        assert_eq!(interpreta(&fed, false).elenco, Some(Elenco { home: "https://a".into(), servers: vec![] }));
         // Da ospite l'elenco è quello del server ospitante: non si salva.
         assert_eq!(interpreta(&fed, true).elenco, None);
-        // A casa, risposta senza federazione: il server non è più federato.
-        assert_eq!(interpreta(&json!({}), false).elenco, Some(None));
+        // Senza blocco `merlin` l'elenco salvato resta (R10).
+        assert_eq!(interpreta(&json!({}), false), Risposta::default());
         // Errore (403): non si tocca niente.
         assert_eq!(interpreta(&json!({"error": "Firma del dispositivo non valida"}), false), Risposta::default());
-        let r = interpreta(&json!({"merlin": {"change_id": "987654321"}}), true);
-        assert_eq!(r.change_id.as_deref(), Some("987654321"));
-        assert_eq!(r.elenco, None);
+        let cambio = json!({"merlin": {"change_id": "987654321"}});
+        assert_eq!(interpreta(&cambio, false).change_id.as_deref(), Some("987654321"));
+        // Da ospite il cambio di ID si ignora: lo dà solo casa (D6).
+        assert_eq!(interpreta(&cambio, true), Risposta::default());
     }
 
     #[test]
@@ -780,5 +834,8 @@ mod tests {
         assert_eq!(con_porta("a.example"), "a.example:21116");
         assert_eq!(con_porta("a.example:1234"), "a.example:1234");
         assert_eq!(con_porta(" a "), "a:21116");
+        assert_eq!(con_porta("2001:db8::1"), "[2001:db8::1]:21116");
+        assert_eq!(con_porta("[2001:db8::1]"), "[2001:db8::1]:21116");
+        assert_eq!(con_porta("[2001:db8::1]:1234"), "[2001:db8::1]:1234");
     }
 }

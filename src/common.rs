@@ -2114,6 +2114,11 @@ pub fn decode64<T: AsRef<[u8]>>(input: T) -> Result<Vec<u8>, base64::DecodeError
 }
 
 pub async fn get_key(sync: bool) -> String {
+    // Merlin: da ospite nella federazione si usa la chiave del server ospitante.
+    #[cfg(feature = "merlin")]
+    if let Some(key) = crate::merlin_federazione::chiave_sovrascritta() {
+        return key;
+    }
     #[cfg(windows)]
     if let Ok(lic) = crate::platform::windows::get_license_from_exe_name() {
         if !lic.key.is_empty() {
@@ -2129,11 +2134,6 @@ pub async fn get_key(sync: bool) -> String {
         let mut options = crate::ipc::get_options_async().await;
         options.remove("key").unwrap_or_default()
     };
-    // Merlin: da ospite nella federazione si usa la chiave del server ospitante.
-    #[cfg(feature = "merlin")]
-    {
-        key = crate::merlin_federazione::gancio_chiave(key);
-    }
     if key.is_empty() {
         key = config::RS_PUB_KEY.to_owned();
     }
