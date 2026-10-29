@@ -111,32 +111,48 @@ pub fn create_http_client_async(
     configure_http_client!(builder, tls_type, danger_accept_invalid_cert, AsyncClient)
 }
 
-/// Come `create_http_client_async`, ma riusa lo stesso client (con pool keep-alive)
-/// finche' non cambiano tipo TLS, accettazione certificati o proxy. Evita di
-/// ricostruire il client e rivalidare la trust store di sistema a ogni chiamata
-/// (su macOS SecTrustEvaluate costa CPU a ogni heartbeat).
+thread_local! {
+    static CLIENT_CACHE_ON: std::cell::Cell<bool> = std::cell::Cell::new(false);
+    static CLIENT_CACHE: std::cell::RefCell<Option<(String, AsyncClient)>> = std::cell::RefCell::new(None);
+}
+
+/// Attiva il riuso del client HTTP sul thread corrente. Va chiamata solo da un
+/// thread con un unico runtime tokio che vive quanto il thread (il ciclo
+/// dell'heartbeat): le connessioni tenute nel pool appartengono al runtime che
+/// le ha aperte, e riusarle da un altro runtime le lascerebbe appese.
+pub fn enable_http_client_cache_for_thread() {
+    CLIENT_CACHE_ON.with(|on| on.set(true));
+}
+
+/// Come `create_http_client_async`, ma sui thread che l'hanno attivato riusa lo
+/// stesso client (con pool keep-alive) finche' non cambiano tipo TLS,
+/// accettazione certificati o proxy. Evita di ricostruire il client e
+/// rivalidare la trust store di sistema a ogni chiamata (su macOS
+/// SecTrustEvaluate costa CPU a ogni heartbeat).
 pub fn create_http_client_async_cached(
     tls_type: TlsType,
     danger_accept_invalid_cert: bool,
 ) -> AsyncClient {
-    use std::sync::{Mutex, OnceLock};
-    static CACHE: OnceLock<Mutex<Option<(String, AsyncClient)>>> = OnceLock::new();
+    if !CLIENT_CACHE_ON.with(|on| on.get()) {
+        return create_http_client_async(tls_type, danger_accept_invalid_cert);
+    }
     let key = format!(
         "{:?}|{}|{:?}",
         tls_type,
         danger_accept_invalid_cert,
         Config::get_socks()
     );
-    let cache = CACHE.get_or_init(|| Mutex::new(None));
-    let mut guard = cache.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some((k, c)) = guard.as_ref() {
-        if *k == key {
-            return c.clone();
+    CLIENT_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some((k, c)) = cache.as_ref() {
+            if *k == key {
+                return c.clone();
+            }
         }
-    }
-    let client = create_http_client_async(tls_type, danger_accept_invalid_cert);
-    *guard = Some((key, client.clone()));
-    client
+        let client = create_http_client_async(tls_type, danger_accept_invalid_cert);
+        *cache = Some((key, client.clone()));
+        client
+    })
 }
 
 pub fn get_url_for_tls<'a>(url: &'a str, proxy_conf: &'a Option<Socks5Server>) -> &'a str {

@@ -85,6 +85,8 @@ impl InfoUploaded {
 #[cfg(not(any(target_os = "ios")))]
 #[tokio::main(flavor = "current_thread")]
 async fn start_hbbs_sync_async() {
+    // Thread e runtime vivono per tutto il programma: il client HTTP si può riusare.
+    crate::hbbs_http::enable_http_client_cache_for_thread();
     let mut interval = crate::rustdesk_interval(tokio::time::interval_at(
         Instant::now() + TIME_CONN,
         TIME_CONN,
