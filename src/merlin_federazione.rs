@@ -41,6 +41,11 @@ pub struct ServerFed {
 pub struct Elenco {
     pub home: String,
     pub servers: Vec<ServerFed>,
+    /// API di casa (come la chiama il client) da cui è arrivato l'elenco: lo
+    /// scrive il client quando salva l'elenco (un valore mandato dal server si
+    /// sovrascrive). Vuoto negli elenchi salvati prima (N4).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub da: String,
 }
 
 /// Estrae l'elenco da `merlin.federation` della risposta all'heartbeat.
@@ -162,6 +167,21 @@ pub fn scegli_primo(risposte: &[(String, bool)]) -> Option<String> {
 
 fn norma(api: &str) -> &str {
     api.trim().trim_end_matches('/')
+}
+
+/// Indirizzo base dell'API (senza `/api/heartbeat`), per confrontare l'API di
+/// casa configurata con quella da cui è arrivato l'elenco.
+fn base_api(url: &str) -> String {
+    let u = norma(url);
+    norma(u.strip_suffix("/api/heartbeat").unwrap_or(u)).to_ascii_lowercase()
+}
+
+/// N4: l'elenco salvato è di un'altra casa. Il PC è stato spostato su un server
+/// diverso da quello che ha mandato l'elenco (anche un server senza API Merlin o
+/// con un Merlin server vecchio, che non dice `"federation": null`): l'elenco
+/// non vale più. Un elenco salvato senza `da` resta.
+pub fn elenco_superato(elenco: &Elenco, api_casa: &str) -> bool {
+    !elenco.da.is_empty() && base_api(&elenco.da) != base_api(api_casa)
 }
 
 /// I server da provare quando quello in uso non risponde: tutti quelli dell'elenco
@@ -443,7 +463,7 @@ pub fn gestisci_risposta(corpo: &str, url: &str) {
     let https = url.trim().to_ascii_lowercase().starts_with("https://");
     let r = interpreta(&v, server_attivo().is_some(), https);
     match r.elenco {
-        CambioElenco::Nuovo(e) => match serde_json::to_string(&e) {
+        CambioElenco::Nuovo(e) => match serde_json::to_string(&Elenco { da: base_api(url), ..e.clone() }) {
             Ok(s) if s != Config::get_option(OPZIONE_ELENCO) => {
                 log::info!("federazione: elenco aggiornato ({} server)", e.servers.len());
                 Config::set_option(OPZIONE_ELENCO.to_owned(), s);
@@ -600,6 +620,11 @@ fn hbbs_casa_con(custom: &str, elenco: &Elenco) -> String {
         .unwrap_or_default()
 }
 
+/// L'API configurata (a casa: la sovrascrittura non c'è).
+fn api_casa() -> String {
+    crate::common::get_api_server(Config::get_option("api-server"), Config::get_option("custom-rendezvous-server"))
+}
+
 fn hbbs_casa(elenco: &Elenco) -> String {
     hbbs_casa_con(&Config::get_option("custom-rendezvous-server"), elenco)
 }
@@ -647,6 +672,13 @@ fn controllo() {
             }
             continue;
         };
+        // N4: a casa (la sovrascrittura la cambia solo questo thread) con un
+        // server diverso da quello dell'elenco: l'elenco non vale più.
+        if server_attivo().is_none() && elenco_superato(&elenco, &api_casa()) {
+            log::info!("federazione: il server di casa è cambiato, elenco della federazione cancellato");
+            Config::set_option(OPZIONE_ELENCO.to_owned(), String::new());
+            continue;
+        }
         if subito {
             prova_altri(&elenco);
             continue;
@@ -785,7 +817,7 @@ mod tests {
     }
 
     fn elenco() -> Elenco {
-        Elenco { home: "https://a".into(), servers: vec![srv("a"), srv("b"), srv("c")] }
+        Elenco { home: "https://a".into(), servers: vec![srv("a"), srv("b"), srv("c")], da: String::new() }
     }
 
     #[test]
@@ -937,7 +969,7 @@ mod tests {
         let fed = json!({"merlin": {"federation": {"home": "https://a", "servers": []}}});
         assert_eq!(
             interpreta(&fed, false, true).elenco,
-            CambioElenco::Nuovo(Elenco { home: "https://a".into(), servers: vec![] })
+            CambioElenco::Nuovo(Elenco { home: "https://a".into(), servers: vec![], da: String::new() })
         );
         // Da ospite l'elenco è quello del server ospitante: non si salva.
         assert_eq!(interpreta(&fed, true, true).elenco, CambioElenco::Tieni);
@@ -959,6 +991,23 @@ mod tests {
         assert_eq!(interpreta(&cambio, true, true), Risposta::default());
         // In chiaro (http) il cambio di ID si ignora (M2).
         assert_eq!(interpreta(&cambio, false, false), Risposta::default());
+    }
+
+    #[test]
+    fn elenco_di_un_altra_casa_superato() {
+        let mut e = elenco();
+        // elenco salvato prima di N4 (senza `da`): resta
+        assert!(!elenco_superato(&e, "https://altro"));
+        e.da = base_api("https://Merlin.Example/api/heartbeat");
+        assert_eq!(e.da, "https://merlin.example");
+        assert!(!elenco_superato(&e, "https://merlin.example/"));
+        assert!(!elenco_superato(&e, " https://merlin.example "));
+        // casa spostata su un altro server (anche senza API Merlin) o senza API
+        assert!(elenco_superato(&e, "https://nuovo.example"));
+        assert!(elenco_superato(&e, "http://192.168.1.5:21114"));
+        assert!(elenco_superato(&e, ""));
+        let s = serde_json::to_string(&elenco()).unwrap();
+        assert!(!s.contains("\"da\""), "senza `da` non si scrive: {s}");
     }
 
     #[test]
