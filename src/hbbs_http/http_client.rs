@@ -111,15 +111,17 @@ pub fn create_http_client_async(
     configure_http_client!(builder, tls_type, danger_accept_invalid_cert, AsyncClient)
 }
 
+#[cfg(feature = "merlin")]
 thread_local! {
     static CLIENT_CACHE_ON: std::cell::Cell<bool> = std::cell::Cell::new(false);
     static CLIENT_CACHE: std::cell::RefCell<Option<(String, AsyncClient)>> = std::cell::RefCell::new(None);
 }
 
-/// Attiva il riuso del client HTTP sul thread corrente. Va chiamata solo da un
+/// Merlin: attiva il riuso del client HTTP sul thread corrente. Va chiamata solo da un
 /// thread con un unico runtime tokio che vive quanto il thread (il ciclo
 /// dell'heartbeat): le connessioni tenute nel pool appartengono al runtime che
 /// le ha aperte, e riusarle da un altro runtime le lascerebbe appese.
+#[cfg(feature = "merlin")]
 pub fn enable_http_client_cache_for_thread() {
     CLIENT_CACHE_ON.with(|on| on.set(true));
 }
@@ -129,6 +131,7 @@ pub fn enable_http_client_cache_for_thread() {
 /// accettazione certificati o proxy. Evita di ricostruire il client e
 /// rivalidare la trust store di sistema a ogni chiamata (su macOS
 /// SecTrustEvaluate costa CPU a ogni heartbeat).
+#[cfg(feature = "merlin")]
 pub fn create_http_client_async_cached(
     tls_type: TlsType,
     danger_accept_invalid_cert: bool,

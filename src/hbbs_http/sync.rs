@@ -85,7 +85,8 @@ impl InfoUploaded {
 #[cfg(not(any(target_os = "ios")))]
 #[tokio::main(flavor = "current_thread")]
 async fn start_hbbs_sync_async() {
-    // Thread e runtime vivono per tutto il programma: il client HTTP si può riusare.
+    // Merlin: thread e runtime vivono per tutto il programma, il client HTTP si può riusare.
+    #[cfg(feature = "merlin")]
     crate::hbbs_http::enable_http_client_cache_for_thread();
     let mut interval = crate::rustdesk_interval(tokio::time::interval_at(
         Instant::now() + TIME_CONN,
@@ -179,9 +180,9 @@ async fn start_hbbs_sync_async() {
                     if !note.is_empty() {
                         v[keys::OPTION_PRESET_NOTE] = json!(note);
                     }
-                    // Merlin (R6): anche il sysinfo è firmato con la chiave del dispositivo.
+                    // Merlin (R6, M1): anche il sysinfo è firmato con la chiave del dispositivo.
                     #[cfg(feature = "merlin")]
-                    crate::merlin_federazione::aggiungi_firma(&mut v);
+                    crate::merlin_federazione::aggiungi_firma(&mut v, crate::merlin_federazione::Tipo::Sysinfo, &url);
                     let v = v.to_string();
                     let mut hash = "".to_owned();
                     if crate::is_public(&url) {
@@ -216,7 +217,7 @@ async fn start_hbbs_sync_async() {
                     match crate::post_request(url.replace("heartbeat", "sysinfo"), v, "").await {
                         Ok(x)  => {
                             #[cfg(feature = "merlin")]
-                            crate::merlin_federazione::gestisci_risposta(&x);
+                            crate::merlin_federazione::gestisci_risposta(&x, &url);
                             if x == "SYSINFO_UPDATED" {
                                 info_uploaded = InfoUploaded::uploaded(url.clone(), id.clone(), sys_username);
                                 log::info!("sysinfo updated");
@@ -251,14 +252,14 @@ async fn start_hbbs_sync_async() {
                 v["modified_at"] = json!(modified_at);
                 // Merlin (D1): heartbeat firmato con la chiave del dispositivo.
                 #[cfg(feature = "merlin")]
-                crate::merlin_federazione::aggiungi_firma(&mut v);
+                crate::merlin_federazione::aggiungi_firma(&mut v, crate::merlin_federazione::Tipo::Heartbeat, &url);
                 let response = crate::post_request(url.clone(), v.to_string(), "").await;
                 if let Err(err) = &response {
                     hbb_common::throttled_log!(API_LOG_INTERVAL, warn, "Heartbeat failed: {err:?}");
                 }
                 if let Ok(s) = response {
                     #[cfg(feature = "merlin")]
-                    crate::merlin_federazione::gestisci_risposta(&s);
+                    crate::merlin_federazione::gestisci_risposta(&s, &url);
                     if let Ok(mut rsp) = serde_json::from_str::<HashMap::<&str, Value>>(&s) {
                         if rsp.remove("sysinfo").is_some() {
                             info_uploaded.uploaded = false;

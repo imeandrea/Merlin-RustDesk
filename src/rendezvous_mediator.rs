@@ -1275,16 +1275,24 @@ impl RendezvousMediator {
         Ok(())
     }
 
-    // Merlin (D10): l'ID non si cambia da solo; lo cambia solo la federazione.
+    // Merlin (D10): in una federazione l'ID non si cambia da solo, lo cambia solo
+    // il server di casa; fuori da una federazione (M4) come RustDesk.
     #[cfg(feature = "merlin")]
-    async fn handle_uuid_mismatch(&mut self, _socket: Sink<'_>) -> ResultType<()> {
-        let mut solving = SOLVING_PK_MISMATCH.lock().await;
-        if solving.is_empty() || *solving == self.host {
+    async fn handle_uuid_mismatch(&mut self, socket: Sink<'_>) -> ResultType<()> {
+        {
+            let mut solving = SOLVING_PK_MISMATCH.lock().await;
+            if !(solving.is_empty() || *solving == self.host) {
+                return Ok(());
+            }
             Config::set_key_confirmed(false);
             *solving = self.host.clone();
-            crate::merlin_federazione::su_uuid_mismatch(&self.host);
+            if !crate::merlin_federazione::su_uuid_mismatch(&self.host) {
+                return Ok(());
+            }
+            log::info!("UUID_MISMATCH received from {}", self.host);
+            Config::update_id();
         }
-        Ok(())
+        self.register_pk(socket).await
     }
 
     #[cfg(not(feature = "merlin"))]

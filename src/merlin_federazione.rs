@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{mpsc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
@@ -191,50 +191,115 @@ pub fn applica_scelta(stato: &mut Stato, elenco: &Elenco, api: &str) -> Option<O
 
 /// Cosa fare della risposta a un heartbeat o a un sysinfo.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub enum CambioElenco {
+    /// Nessuna indicazione: l'elenco salvato resta com'è (R10).
+    #[default]
+    Tieni,
+    /// Elenco nuovo da salvare.
+    Nuovo(Elenco),
+    /// Casa dice esplicitamente «nessuna federazione» (`"federation": null`, I2):
+    /// l'elenco salvato si cancella.
+    Cancella,
+}
+
+/// Cosa fare della risposta a un heartbeat o a un sysinfo.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Risposta {
-    /// Elenco nuovo da salvare; `None`: l'elenco salvato resta com'è (R10).
-    pub elenco: Option<Elenco>,
+    pub elenco: CambioElenco,
     /// ID nuovo assegnato dal server (D6).
     pub change_id: Option<String>,
 }
 
 /// Interpreta la risposta. Da ospite non si prende niente: il `home` dell'elenco
 /// è il server ospitante e il cambio di ID lo dà solo casa (D6). Le risposte
-/// d'errore (`error`) non toccano niente.
-pub fn interpreta(v: &Value, ospite: bool) -> Risposta {
+/// d'errore (`error`) non toccano niente. `https`: la risposta è arrivata da un
+/// indirizzo https; un `change_id` in chiaro si ignora (M2: chi sta in mezzo non
+/// deve poter cambiare l'ID, che è permanente).
+pub fn interpreta(v: &Value, ospite: bool, https: bool) -> Risposta {
     let Some(o) = v.as_object() else { return Risposta::default() };
     if ospite || o.contains_key("error") {
         return Risposta::default();
     }
-    let change_id = v
-        .get("merlin")
+    let merlin = v.get("merlin");
+    let change_id = merlin
         .and_then(|m| m.get("change_id"))
         .and_then(Value::as_str)
         .map(|s| s.trim().to_owned())
-        .filter(|s| !s.is_empty());
-    let elenco = if change_id.is_some() { None } else { da_risposta(v) };
+        .filter(|s| !s.is_empty() && https);
+    let elenco = if change_id.is_some() {
+        CambioElenco::Tieni
+    } else {
+        match merlin.and_then(|m| m.get("federation")) {
+            Some(Value::Null) => CambioElenco::Cancella,
+            Some(_) => da_risposta(v).map_or(CambioElenco::Tieni, CambioElenco::Nuovo),
+            None => CambioElenco::Tieni,
+        }
+    };
     Risposta { elenco, change_id }
 }
 
-/// Byte firmati (D1): `"merlin-hb-v1\0" + id + "\0" + uuid + "\0" + ts`.
-pub fn messaggio_heartbeat(id: &str, uuid: &str, ts: i64) -> Vec<u8> {
-    let mut m = b"merlin-hb-v1\0".to_vec();
-    m.extend_from_slice(id.as_bytes());
-    m.push(0);
-    m.extend_from_slice(uuid.as_bytes());
-    m.push(0);
-    m.extend_from_slice(ts.to_string().as_bytes());
+/// Tipo della richiesta firmata (M1): la firma di un heartbeat non vale per un
+/// sysinfo e viceversa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tipo {
+    Heartbeat,
+    Sysinfo,
+}
+
+impl Tipo {
+    fn nome(self) -> &'static str {
+        match self {
+            Tipo::Heartbeat => "heartbeat",
+            Tipo::Sysinfo => "sysinfo",
+        }
+    }
+}
+
+/// Informazioni del sysinfo firmate insieme al resto (M1), come le salva il server.
+pub const CAMPI_SYSINFO: [&str; 6] = ["cpu", "hostname", "memory", "os", "username", "version"];
+
+/// Host di `url` come lo confronta il server: minuscolo, senza credenziali e
+/// senza la porta di serie (`:443`, `:80`).
+pub fn host_di(url: &str) -> String {
+    let resto = url.trim().split_once("://").map_or(url.trim(), |(_, r)| r);
+    let autorita = resto.split(['/', '?', '#']).next().unwrap_or_default();
+    let host = autorita.rsplit_once('@').map_or(autorita, |(_, h)| h).to_ascii_lowercase();
+    for porta in [":443", ":80"] {
+        if let Some(senza) = host.strip_suffix(porta) {
+            return senza.to_owned();
+        }
+    }
+    host
+}
+
+fn testo<'a>(v: &'a Value, k: &str) -> &'a str {
+    v.get(k).and_then(Value::as_str).unwrap_or_default()
+}
+
+/// Byte firmati (D1, versione 2 per M1): `"merlin-hb-v2\0" + tipo + "\0" + host
+/// + "\0" + id + "\0" + uuid + "\0" + ts`, e per il sysinfo anche `"\0" + campo`
+/// per ognuno di `CAMPI_SYSINFO` (stringa vuota se manca). Uguale byte per byte
+/// a `messaggio_heartbeat` del Merlin server.
+pub fn messaggio_heartbeat(tipo: Tipo, host: &str, corpo: &Value, ts: i64) -> Vec<u8> {
+    let ts = ts.to_string();
+    let mut parti = vec![tipo.nome(), host, testo(corpo, "id"), testo(corpo, "uuid"), ts.as_str()];
+    if tipo == Tipo::Sysinfo {
+        parti.extend(CAMPI_SYSINFO.iter().map(|k| testo(corpo, k)));
+    }
+    let mut m = b"merlin-hb-v2\0".to_vec();
+    m.extend_from_slice(parti.join("\0").as_bytes());
     m
 }
 
-/// Il blocco `merlin` di D1 firmato con la chiave `sk` (64 byte) e `pk` (32 byte).
-pub fn firma_con(sk: &[u8], pk: &[u8], id: &str, uuid: &str, ts: i64) -> Option<Value> {
+/// Il blocco `merlin` di D1 per `corpo` firmato con la chiave `sk` (64 byte) e
+/// `pk` (32 byte).
+pub fn firma_con(sk: &[u8], pk: &[u8], tipo: Tipo, host: &str, corpo: &Value, ts: i64) -> Option<Value> {
     use hbb_common::sodiumoxide::crypto::sign;
     let sk = sign::SecretKey::from_slice(sk)?;
     if pk.len() != sign::PUBLICKEYBYTES {
         return None;
     }
-    let sig = sign::sign_detached(&messaggio_heartbeat(id, uuid, ts), &sk);
+    let sig = sign::sign_detached(&messaggio_heartbeat(tipo, host, corpo, ts), &sk);
     Some(json!({
         "v": MERLIN_CLIENT_VERSION,
         "pk": crate::encode64(pk),
@@ -243,24 +308,19 @@ pub fn firma_con(sk: &[u8], pk: &[u8], id: &str, uuid: &str, ts: i64) -> Option<
     }))
 }
 
-/// Il blocco `merlin` di D1 firmato con la chiave del dispositivo; `Null` se la
-/// chiave manca.
-pub fn firma_heartbeat(id: &str, uuid: &str, ts: i64) -> Value {
-    let (sk, pk) = Config::get_key_pair();
-    firma_con(&sk, &pk, id, uuid, ts).unwrap_or_else(|| {
-        hbb_common::throttled_log!(LOG_INTERVALLO, error, "federazione: chiave del dispositivo non valida, heartbeat non firmato");
-        Value::Null
-    })
-}
-
 /// Aggiunge il blocco `merlin` al corpo di un heartbeat o di un sysinfo (R6),
-/// firmando `id` e `uuid` del corpo stesso.
-pub fn aggiungi_firma(v: &mut Value) {
-    let id = v["id"].as_str().unwrap_or_default().to_owned();
-    let uuid = v["uuid"].as_str().unwrap_or_default().to_owned();
-    let m = firma_heartbeat(&id, &uuid, hbb_common::get_time());
-    if !m.is_null() {
-        v["merlin"] = m;
+/// firmato con la chiave del dispositivo per `tipo` e per l'host di `url` (M1).
+/// Va chiamata quando il corpo è completo: le informazioni del sysinfo sono firmate.
+pub fn aggiungi_firma(v: &mut Value, tipo: Tipo, url: &str) {
+    let (sk, pk) = Config::get_key_pair();
+    match firma_con(&sk, &pk, tipo, &host_di(url), v, hbb_common::get_time()) {
+        Some(m) => v["merlin"] = m,
+        None => hbb_common::throttled_log!(
+            LOG_INTERVALLO,
+            error,
+            "federazione: chiave del dispositivo non valida, {} non firmato",
+            tipo.nome()
+        ),
     }
 }
 
@@ -372,20 +432,35 @@ fn elenco_salvato() -> Option<Elenco> {
     serde_json::from_str(&s).ok()
 }
 
-/// Gestisce la risposta a un heartbeat o a un sysinfo: elenco della federazione
-/// e `change_id` (D3, D10).
-pub fn gestisci_risposta(corpo: &str) {
+/// Gestisce la risposta a un heartbeat o a un sysinfo mandato a `url`: elenco
+/// della federazione e `change_id` (D3, D10). Un errore del server (per esempio
+/// la firma fuori tempo per l'ora del PC sbagliata, I1) finisce nel log.
+pub fn gestisci_risposta(corpo: &str, url: &str) {
     let Ok(v) = serde_json::from_str::<Value>(corpo) else { return };
-    let r = interpreta(&v, server_attivo().is_some());
-    if let Some(e) = r.elenco {
-        match serde_json::to_string(&e) {
+    if let Some(e) = v.get("error").and_then(Value::as_str) {
+        hbb_common::throttled_log!(LOG_INTERVALLO, warn, "federazione: il server ha rifiutato la richiesta: {e}");
+    }
+    let https = url.trim().to_ascii_lowercase().starts_with("https://");
+    let r = interpreta(&v, server_attivo().is_some(), https);
+    match r.elenco {
+        CambioElenco::Nuovo(e) => match serde_json::to_string(&e) {
             Ok(s) if s != Config::get_option(OPZIONE_ELENCO) => {
                 log::info!("federazione: elenco aggiornato ({} server)", e.servers.len());
                 Config::set_option(OPZIONE_ELENCO.to_owned(), s);
             }
             Ok(_) => {}
             Err(e) => log::error!("federazione: elenco non salvato: {e}"),
+        },
+        CambioElenco::Cancella => {
+            if !Config::get_option(OPZIONE_ELENCO).is_empty() {
+                log::info!("federazione: il server non fa più parte di una federazione, elenco cancellato");
+                Config::set_option(OPZIONE_ELENCO.to_owned(), String::new());
+            }
         }
+        CambioElenco::Tieni => {}
+    }
+    if v.pointer("/merlin/change_id").is_some() && !https && server_attivo().is_none() {
+        hbb_common::throttled_log!(LOG_INTERVALLO, warn, "federazione: cambio di ID ignorato, l'API non è in https");
     }
     if let Some(id) = r.change_id {
         cambia_id(id);
@@ -421,18 +496,26 @@ fn cambia_id(id: String) {
     crate::rendezvous_mediator::RendezvousMediator::restart();
 }
 
-/// Gancio di `handle_uuid_mismatch` (D10): l'ID non si cambia; da ospite il
-/// server si esclude per un'ora e si passa al successivo.
-pub fn su_uuid_mismatch(host: &str) {
-    hbb_common::throttled_log!(
-        LOG_INTERVALLO,
-        error,
-        "UUID_MISMATCH da {host}: l'ID non si cambia da solo, lo cambia solo la federazione"
-    );
+/// Gancio di `handle_uuid_mismatch` (D10): in una federazione l'ID non si cambia;
+/// da ospite il server si esclude per un'ora e si passa al successivo. Restituisce
+/// `true` se va fatto come RustDesk (ID nuovo): solo fuori da una federazione,
+/// cioè a casa e senza un elenco salvato (M4: un server non federato funziona
+/// come prima, anche dopo una reinstallazione che ha cambiato la chiave).
+pub fn su_uuid_mismatch(host: &str) -> bool {
     if STATO.lock().unwrap().uuid_mismatch(Instant::now()) {
         hbb_common::throttled_log!(LOG_INTERVALLO, error, "federazione: {host} rifiuta l'ID, lo escludo per un'ora");
         CAMBIA_SUBITO.store(true, Ordering::SeqCst);
+        return false;
     }
+    if elenco_salvato().is_none() {
+        return true;
+    }
+    hbb_common::throttled_log!(
+        LOG_INTERVALLO,
+        error,
+        "UUID_MISMATCH da {host}: nella federazione l'ID non si cambia da solo, lo cambia solo il server di casa"
+    );
+    false
 }
 
 /// Intervallo del controllo del server in uso.
@@ -442,9 +525,20 @@ const GIRI_PER_CASA: u32 = 3;
 /// Timeout della connessione di prova all'hbbs.
 const TIMEOUT_PROVA: Duration = Duration::from_secs(5);
 
+/// Prove al massimo in corso insieme: un thread bloccato su un DNS che non
+/// risponde resta vivo oltre il timeout, e senza tetto se ne accumulerebbero.
+const PROVE_MAX: usize = 8;
+static PROVE_IN_CORSO: AtomicUsize = AtomicUsize::new(0);
+
 /// Connessione TCP di prova all'hbbs `host[:porta]`, risoluzione DNS compresa,
-/// entro `TIMEOUT_PROVA` in tutto.
+/// entro `TIMEOUT_PROVA` in tutto. Con `PROVE_MAX` prove ancora appese (DNS
+/// bloccato) la prova fallisce subito senza aprire altri thread.
 fn prova(hbbs: &str) -> Esito {
+    if PROVE_IN_CORSO.fetch_add(1, Ordering::SeqCst) >= PROVE_MAX {
+        PROVE_IN_CORSO.fetch_sub(1, Ordering::SeqCst);
+        hbb_common::throttled_log!(LOG_INTERVALLO, warn, "federazione: troppe prove appese (DNS bloccato?), salto la prova di {hbbs}");
+        return Esito::Fallito;
+    }
     let fine = Instant::now() + TIMEOUT_PROVA;
     let (tx, rx) = mpsc::channel();
     let indirizzo = con_porta(hbbs);
@@ -455,6 +549,7 @@ fn prova(hbbs: &str) -> Esito {
                 !resto.is_zero() && TcpStream::connect_timeout(&a, resto).is_ok()
             })
         });
+        PROVE_IN_CORSO.fetch_sub(1, Ordering::SeqCst);
         let _ = tx.send(ok);
     });
     match rx.recv_timeout(TIMEOUT_PROVA) {
@@ -696,20 +791,44 @@ mod tests {
     #[test]
     fn firma_heartbeat_verificabile() {
         use hbb_common::sodiumoxide::crypto::sign;
-        assert_eq!(messaggio_heartbeat("123", "dXU=", 170), b"merlin-hb-v1\0123\0dXU=\0170".to_vec());
+        let hb = json!({"id": "123", "uuid": "dXU=", "altro": 1});
+        assert_eq!(
+            messaggio_heartbeat(Tipo::Heartbeat, "a.example", &hb, 170),
+            b"merlin-hb-v2\0heartbeat\0a.example\0123\0dXU=\0170".to_vec()
+        );
+        // Il sysinfo firma anche le sei informazioni (vuote se mancano).
+        let si = json!({"id": "123", "uuid": "dXU=", "cpu": "c", "hostname": "h", "memory": "m", "os": "o", "version": "v"});
+        assert_eq!(
+            messaggio_heartbeat(Tipo::Sysinfo, "a.example", &si, 170),
+            b"merlin-hb-v2\0sysinfo\0a.example\0123\0dXU=\0170\0c\0h\0m\0o\0\0v".to_vec()
+        );
         let (pk, sk) = sign::gen_keypair();
-        let v = firma_con(&sk.0, &pk.0, "123456789", "dXVpZA==", 1_700_000_000_123).unwrap();
+        let corpo = json!({"id": "123456789", "uuid": "dXVpZA=="});
+        let v = firma_con(&sk.0, &pk.0, Tipo::Heartbeat, "a.example", &corpo, 1_700_000_000_123).unwrap();
         assert_eq!(v["v"], MERLIN_CLIENT_VERSION);
         assert_eq!(v["ts"], 1_700_000_000_123i64);
         assert_eq!(crate::decode64(v["pk"].as_str().unwrap()).unwrap(), pk.0.to_vec());
         let sig = crate::decode64(v["sig"].as_str().unwrap()).unwrap();
         assert_eq!(sig.len(), 64);
         let sig = sign::Signature::try_from(&sig[..]).unwrap();
-        let m = messaggio_heartbeat("123456789", "dXVpZA==", 1_700_000_000_123);
-        assert!(sign::verify_detached(&sig, &m, &pk));
-        // Un altro ID non verifica.
-        assert!(!sign::verify_detached(&sig, &messaggio_heartbeat("123456780", "dXVpZA==", 1_700_000_000_123), &pk));
-        assert!(firma_con(&[1, 2], &pk.0, "1", "u", 1).is_none());
+        let ts = 1_700_000_000_123;
+        assert!(sign::verify_detached(&sig, &messaggio_heartbeat(Tipo::Heartbeat, "a.example", &corpo, ts), &pk));
+        // Un altro ID, un altro tipo o un altro destinatario non verificano.
+        let altro = json!({"id": "123456780", "uuid": "dXVpZA=="});
+        assert!(!sign::verify_detached(&sig, &messaggio_heartbeat(Tipo::Heartbeat, "a.example", &altro, ts), &pk));
+        assert!(!sign::verify_detached(&sig, &messaggio_heartbeat(Tipo::Sysinfo, "a.example", &corpo, ts), &pk));
+        assert!(!sign::verify_detached(&sig, &messaggio_heartbeat(Tipo::Heartbeat, "b.example", &corpo, ts), &pk));
+        assert!(firma_con(&[1, 2], &pk.0, Tipo::Heartbeat, "a", &corpo, 1).is_none());
+    }
+
+    #[test]
+    fn host_della_richiesta_come_lo_vede_il_server() {
+        assert_eq!(host_di("https://A.Example.net/api/heartbeat"), "a.example.net");
+        assert_eq!(host_di("https://a.example.net:443/api/heartbeat"), "a.example.net");
+        assert_eq!(host_di("http://192.168.1.5:21114/api/heartbeat"), "192.168.1.5:21114");
+        assert_eq!(host_di("http://h:80/x"), "h");
+        assert_eq!(host_di("https://u:p@h:8443?x"), "h:8443");
+        assert_eq!(host_di("http://[::1]:21114/api"), "[::1]:21114");
     }
 
     /// Esegue `f` con `EXE_RENDEZVOUS_SERVER` impostato a `exe`, poi lo ripristina.
@@ -816,17 +935,30 @@ mod tests {
     #[test]
     fn risposta_heartbeat_interpretata() {
         let fed = json!({"merlin": {"federation": {"home": "https://a", "servers": []}}});
-        assert_eq!(interpreta(&fed, false).elenco, Some(Elenco { home: "https://a".into(), servers: vec![] }));
+        assert_eq!(
+            interpreta(&fed, false, true).elenco,
+            CambioElenco::Nuovo(Elenco { home: "https://a".into(), servers: vec![] })
+        );
         // Da ospite l'elenco è quello del server ospitante: non si salva.
-        assert_eq!(interpreta(&fed, true).elenco, None);
-        // Senza blocco `merlin` l'elenco salvato resta (R10).
-        assert_eq!(interpreta(&json!({}), false), Risposta::default());
+        assert_eq!(interpreta(&fed, true, true).elenco, CambioElenco::Tieni);
+        // Senza blocco `merlin`, o con un `merlin` senza `federation`, l'elenco salvato resta (R10).
+        assert_eq!(interpreta(&json!({}), false, true), Risposta::default());
+        assert_eq!(interpreta(&json!({"merlin": {}}), false, true), Risposta::default());
+        // Un elenco malformato non cancella niente.
+        assert_eq!(interpreta(&json!({"merlin": {"federation": 3}}), false, true).elenco, CambioElenco::Tieni);
+        // «Nessuna federazione» esplicito da casa: si cancella (I2); da ospite no.
+        let nessuna = json!({"merlin": {"federation": null}});
+        assert_eq!(interpreta(&nessuna, false, true).elenco, CambioElenco::Cancella);
+        assert_eq!(interpreta(&nessuna, false, false).elenco, CambioElenco::Cancella);
+        assert_eq!(interpreta(&nessuna, true, true).elenco, CambioElenco::Tieni);
         // Errore (403): non si tocca niente.
-        assert_eq!(interpreta(&json!({"error": "Firma del dispositivo non valida"}), false), Risposta::default());
+        assert_eq!(interpreta(&json!({"error": "Firma del dispositivo non valida"}), false, true), Risposta::default());
         let cambio = json!({"merlin": {"change_id": "987654321"}});
-        assert_eq!(interpreta(&cambio, false).change_id.as_deref(), Some("987654321"));
+        assert_eq!(interpreta(&cambio, false, true).change_id.as_deref(), Some("987654321"));
         // Da ospite il cambio di ID si ignora: lo dà solo casa (D6).
-        assert_eq!(interpreta(&cambio, true), Risposta::default());
+        assert_eq!(interpreta(&cambio, true, true), Risposta::default());
+        // In chiaro (http) il cambio di ID si ignora (M2).
+        assert_eq!(interpreta(&cambio, false, false), Risposta::default());
     }
 
     #[test]
