@@ -792,6 +792,10 @@ fn get_rendezvous_server_(_ms_timeout: u64) -> (String, Vec<String>) {
 #[inline]
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 async fn get_rendezvous_server_(ms_timeout: u64) -> (String, Vec<String>) {
+    #[cfg(feature = "merlin")]
+    if crate::merlin::direct_server() {
+        return (Config::get_rendezvous_server(), Config::get_rendezvous_servers());
+    }
     crate::ipc::get_rendezvous_server(ms_timeout).await
 }
 
@@ -2127,6 +2131,8 @@ pub async fn get_key(sync: bool) -> String {
     }
     #[cfg(target_os = "ios")]
     let mut key = Config::get_option("key");
+    #[cfg(all(feature = "merlin", not(target_os = "ios")))]
+    let sync = sync || crate::merlin::direct_server();
     #[cfg(not(target_os = "ios"))]
     let mut key = if sync {
         Config::get_option("key")

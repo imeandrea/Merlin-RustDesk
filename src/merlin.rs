@@ -270,6 +270,15 @@ fn job_of(v: &Value) -> i32 {
     v.get("job").and_then(|x| x.as_i64()).unwrap_or(0) as i32
 }
 
+/// Viewer sessions use the server Merlin passes, not the one of a local
+/// RustDesk service reached over IPC (it may be registered elsewhere, e.g. a
+/// retry on another federation server).
+static DIRECT_SERVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn direct_server() -> bool {
+    DIRECT_SERVER.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Server, relay and key come from Merlin's settings.
 fn apply_server(cmd: &Value) {
     for (opt, key) in [("custom-rendezvous-server", "server"), ("relay-server", "relay"), ("key", "key"), ("api-server", "api")] {
@@ -355,6 +364,7 @@ pub fn run_bridge() {
         return;
     }
     apply_server(&connect);
+    DIRECT_SERVER.store(true, std::sync::atomic::Ordering::Relaxed);
 
     let session: Session<MerlinHandler> = Session {
         password: str_of(&connect, "password").to_owned(),
