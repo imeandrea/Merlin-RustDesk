@@ -217,7 +217,9 @@ async fn start_hbbs_sync_async() {
                     match crate::post_request(url.replace("heartbeat", "sysinfo"), v, "").await {
                         Ok(x)  => {
                             #[cfg(feature = "merlin")]
-                            crate::merlin_federazione::gestisci_risposta(&x, &url);
+                            if crate::merlin_federazione::gestisci_risposta(&x, &url, &id) {
+                                continue;
+                            }
                             if x == "SYSINFO_UPDATED" {
                                 info_uploaded = InfoUploaded::uploaded(url.clone(), id.clone(), sys_username);
                                 log::info!("sysinfo updated");
@@ -259,7 +261,7 @@ async fn start_hbbs_sync_async() {
                 }
                 if let Ok(s) = response {
                     #[cfg(feature = "merlin")]
-                    crate::merlin_federazione::gestisci_risposta(&s, &url);
+                    crate::merlin_federazione::gestisci_risposta(&s, &url, &id);
                     if let Ok(mut rsp) = serde_json::from_str::<HashMap::<&str, Value>>(&s) {
                         if rsp.remove("sysinfo").is_some() {
                             info_uploaded.uploaded = false;

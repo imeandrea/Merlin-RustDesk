@@ -452,11 +452,13 @@ fn elenco_salvato() -> Option<Elenco> {
     serde_json::from_str(&s).ok()
 }
 
-/// Gestisce la risposta a un heartbeat o a un sysinfo mandato a `url`: elenco
-/// della federazione e `change_id` (D3, D10). Un errore del server (per esempio
-/// la firma fuori tempo per l'ora del PC sbagliata, I1) finisce nel log.
-pub fn gestisci_risposta(corpo: &str, url: &str) {
-    let Ok(v) = serde_json::from_str::<Value>(corpo) else { return };
+/// Gestisce la risposta a un heartbeat o a un sysinfo mandato a `url` con
+/// l'ID `id_inviato`: elenco della federazione e `change_id` (D3, D10). Un
+/// errore del server (per esempio la firma fuori tempo per l'ora del PC
+/// sbagliata, I1) finisce nel log. Vero se l'ID è cambiato: le richieste già
+/// pronte con l'ID vecchio non vanno mandate.
+pub fn gestisci_risposta(corpo: &str, url: &str, id_inviato: &str) -> bool {
+    let Ok(v) = serde_json::from_str::<Value>(corpo) else { return false };
     if let Some(e) = v.get("error").and_then(Value::as_str) {
         hbb_common::throttled_log!(LOG_INTERVALLO, warn, "federazione: il server ha rifiutato la richiesta: {e}");
     }
@@ -482,9 +484,16 @@ pub fn gestisci_risposta(corpo: &str, url: &str) {
     if v.pointer("/merlin/change_id").is_some() && !https && server_attivo().is_none() {
         hbb_common::throttled_log!(LOG_INTERVALLO, warn, "federazione: cambio di ID ignorato, l'API non è in https");
     }
-    if let Some(id) = r.change_id {
-        cambia_id(id);
+    match r.change_id {
+        Some(id) => cambia_id(id, id_inviato),
+        None => false,
     }
+}
+
+/// Un `change_id` vale solo per la richiesta mandata con l'ID attuale: la
+/// risposta a una richiesta con un ID già cambiato chiederebbe un secondo ID.
+fn cambio_da_applicare(nuovo: &str, inviato: &str, attuale: &str) -> bool {
+    nuovo != attuale && inviato == attuale
 }
 
 /// ID assegnato dal server (D6): 9 cifre, al massimo 10 come gli ID RustDesk.
@@ -501,19 +510,23 @@ pub fn id_valido(id: &str) -> bool {
 /// e Linux, SYSTEM su Windows). Mandarsi un messaggio IPC farebbe le stesse due
 /// chiamate; la sincronizzazione esistente porta poi la configurazione al
 /// servizio root (macOS/Linux) e l'interfaccia legge l'ID via IPC da qui.
-fn cambia_id(id: String) {
+fn cambia_id(id: String, inviato: &str) -> bool {
     if !id_valido(&id) {
         log::error!("federazione: ID nuovo dal server non valido: {id:?}");
-        return;
+        return false;
     }
     let vecchio = Config::get_id();
-    if id == vecchio {
-        return;
+    if !cambio_da_applicare(&id, inviato, &vecchio) {
+        if inviato != vecchio {
+            log::info!("federazione: cambio di ID per {inviato} ignorato, l'ID è già {vecchio}");
+        }
+        return false;
     }
     log::info!("federazione: il server ha cambiato l'ID {vecchio} in {id}");
     Config::set_key_confirmed(false);
     Config::set_id(&id);
     crate::rendezvous_mediator::RendezvousMediator::restart();
+    true
 }
 
 /// Gancio di `handle_uuid_mismatch` (D10): in una federazione l'ID non si cambia;
@@ -926,6 +939,14 @@ mod tests {
         assert!(!id_valido("a23456789"));
         assert!(!id_valido("12345 789"));
         assert!(!id_valido(""));
+    }
+
+    #[test]
+    fn cambio_di_id_solo_per_la_richiesta_con_l_id_attuale() {
+        assert!(cambio_da_applicare("700558452", "1919300028", "1919300028"));
+        // Heartbeat partito con l'ID vecchio dopo il cambio chiesto dal sysinfo.
+        assert!(!cambio_da_applicare("864345276", "1919300028", "700558452"));
+        assert!(!cambio_da_applicare("700558452", "700558452", "700558452"));
     }
 
     #[test]
