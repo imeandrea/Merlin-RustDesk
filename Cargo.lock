@@ -5330,7 +5330,7 @@ dependencies = [
 
 [[package]]
 name = "merlin-rustdesk-client"
-version = "0.4.0"
+version = "0.4.1"
 dependencies = [
  "base64 0.22.1",
  "minisign-verify",
@@ -5342,6 +5342,8 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-single-instance",
+ "webview2-com",
+ "windows 0.62.0",
 ]
 
 [[package]]

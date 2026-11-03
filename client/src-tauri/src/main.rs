@@ -16,6 +16,8 @@ mod brand;
 mod linux_install;
 mod updater;
 mod viewer;
+#[cfg(windows)]
+mod webview2;
 
 use std::sync::{Mutex, OnceLock};
 
@@ -369,6 +371,11 @@ fn main() {
     // Inversione di ruolo: finestra di visione del computer del tecnico, processo a sé.
     let argv: Vec<String> = std::env::args().collect();
     let name = brand["name"].as_str().filter(|n| !n.is_empty()).unwrap_or("Merlin-RustDesk").to_owned();
+    // Visore: senza WebView2 non si apre (il controllo per la finestra principale è dopo core_main).
+    #[cfg(windows)]
+    if (viewer::parse_args(&argv).is_some() || viewer::parse_connect_args(&argv).is_some()) && !webview2::ensure(&name) {
+        std::process::exit(1);
+    }
     if let Some((peer, uuid)) = viewer::parse_args(&argv) {
         return viewer::run(&name, peer, librustdesk::merlin_viewer::ViewerTarget::Switch(uuid), context);
     }
@@ -388,6 +395,11 @@ fn main() {
         None => return,
     } };
     let cm = args.first().is_some_and(|a| a == "--cm");
+    // Senza WebView2 l'interfaccia non parte (exe portatile: nessun installer lo ha controllato).
+    #[cfg(windows)]
+    if !webview2::ensure(&name) {
+        std::process::exit(1);
+    }
     if !cm {
         updater::cleanup();
         seed_server();
