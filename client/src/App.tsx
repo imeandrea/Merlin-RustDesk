@@ -134,7 +134,7 @@ function MainWindow() {
       <Sidebar status={info?.status ?? 0} nav={nav} page={current} onPage={setPage} narrow={narrow}
         version={info?.version ?? ""} onAbout={() => setAboutOpen(true)} />
       <div className="relative flex min-w-0 flex-1 flex-col">
-        <UpdateBar />
+        <UpdateBar inSession={conn.clients.length > 0} />
         <main className="min-h-0 flex-1 overflow-y-auto">
           {/* Il cambio di pagina scorre appena dal basso: mostra cosa è cambiato. */}
           <div key={current} className="animate-in fade-in slide-in-from-bottom-2 mx-auto flex min-h-full w-full max-w-md flex-col gap-5 px-5 py-5 duration-300 motion-reduce:animate-none">
@@ -272,29 +272,40 @@ function StatusDot({ look, className }: { look: StatusLook; className?: string }
   )
 }
 
-const UPDATE_EVERY_MS = 6 * 60 * 60 * 1000
+const UPDATE_EVERY_MS = 60 * 60 * 1000
 
-/** Versione nuova del client (GitHub Releases): barra in cima al contenuto con «Aggiorna ora».
- *  Le versioni private compilate non la mostrano mai. */
-function UpdateBar() {
-  const [update, setUpdate] = React.useState<{ version: string; notes: string } | null>(null)
+/** Versione nuova del client (GitHub Releases), controllata ogni ora: barra in cima al contenuto.
+ *  Se si installa senza permessi (exe portatile, AppImage, app macOS) parte da sola appena non ci
+ *  sono connessioni in arrivo (`inSession`); il client installato chiede i permessi, quindi
+ *  aspetta «Aggiorna ora». Le versioni private compilate non la mostrano mai. */
+function UpdateBar({ inSession }: { inSession: boolean }) {
+  const [update, setUpdate] = React.useState<{ version: string; notes: string; silent?: boolean } | null>(null)
   const [busy, setBusy] = React.useState(false)
+  const [autoFailed, setAutoFailed] = React.useState(false)
   React.useEffect(() => {
-    const check = () => { void invoke<{ version: string; notes: string } | null>("rd_update_check").then(setUpdate).catch(() => {}) }
+    const check = () => { void invoke<{ version: string; notes: string; silent?: boolean } | null>("rd_update_check").then(setUpdate).catch(() => {}) }
     const first = setTimeout(check, 5000)
     const every = setInterval(check, UPDATE_EVERY_MS)
     return () => { clearTimeout(first); clearInterval(every) }
   }, [])
-  if (!update) return null
-  const install = () => {
+  const install = React.useCallback((auto: boolean) => {
     setBusy(true)
-    invoke("rd_update_install").catch(e => { setBusy(false); toast.error("Aggiornamento non riuscito", { description: String(e) }) })
-  }
+    invoke("rd_update_install").catch(e => {
+      setBusy(false)
+      // Automatico non riuscito: resta la barra con «Aggiorna ora», senza riprovare da solo.
+      if (auto) setAutoFailed(true)
+      toast.error("Aggiornamento non riuscito", { description: String(e) })
+    })
+  }, [])
+  React.useEffect(() => {
+    if (update?.silent && !inSession && !busy && !autoFailed) install(true)
+  }, [update, inSession, busy, autoFailed, install])
+  if (!update) return null
   return (
     <div className="bg-primary/10 text-primary animate-in slide-in-from-top fade-in flex h-10 shrink-0 items-center gap-2 border-b px-3 text-sm duration-300" role="status">
       <ArrowBigUpDashIcon className="size-4 shrink-0" />
       <span className="min-w-0 flex-1 truncate" title={update.notes || undefined}>Aggiornamento disponibile · <span className="font-medium tabular-nums">v{update.version}</span></span>
-      <Button size="sm" className="h-7" disabled={busy} onClick={install}>{busy ? <><Spinner /> Aggiornamento…</> : "Aggiorna ora"}</Button>
+      <Button size="sm" className="h-7" disabled={busy} onClick={() => install(false)}>{busy ? <><Spinner /> Aggiornamento…</> : "Aggiorna ora"}</Button>
     </div>
   )
 }

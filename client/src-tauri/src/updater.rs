@@ -139,6 +139,21 @@ pub fn cleanup() {
     }
 }
 
+/// L'aggiornamento si installa senza chiedere permessi (exe portatile, AppImage, app macOS):
+/// solo allora parte da solo; il client installato (Programmi, /usr/lib) chiede la UAC o pkexec.
+pub fn silent() -> bool {
+    let Ok(_cur) = own_file() else { return false };
+    #[cfg(windows)]
+    if installed_windows(&_cur) {
+        return false;
+    }
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("APPIMAGE").is_none() {
+        return false;
+    }
+    true
+}
+
 /// Scarica, verifica e installa `u`; al ritorno la finestra va chiusa (parte la versione nuova).
 pub fn install(u: &Update) -> Result<(), String> {
     let data = download(u)?;

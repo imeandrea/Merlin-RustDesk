@@ -167,11 +167,11 @@ async fn rd_request_assistance() -> Result<(), String> {
 /// Ultimo aggiornamento trovato (lo installa `rd_update_install`).
 static UPDATE: Mutex<Option<updater::Update>> = Mutex::new(None);
 
-/// Versione più recente disponibile: `{ version, notes }`, o null.
+/// Versione più recente disponibile: `{ version, notes, silent }`, o null.
 #[tauri::command]
 async fn rd_update_check() -> Result<Option<Value>, String> {
     let found = tauri::async_runtime::spawn_blocking(updater::check).await.map_err(|e| e.to_string())??;
-    let out = found.as_ref().map(|u| json!({ "version": u.version, "notes": u.notes }));
+    let out = found.as_ref().map(|u| json!({ "version": u.version, "notes": u.notes, "silent": updater::silent() }));
     *UPDATE.lock().unwrap() = found;
     Ok(out)
 }
